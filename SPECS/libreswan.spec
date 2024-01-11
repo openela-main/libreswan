@@ -30,8 +30,8 @@
 Name: libreswan
 Summary: Internet Key Exchange (IKEv1 and IKEv2) implementation for IPsec
 # version is generated in the release script
-Version: 4.9
-Release: %{?prever:0.}4%{?prever:.%{prever}}%{?dist}
+Version: 4.12
+Release: %{?prever:0.}1%{?prever:.%{prever}}%{?dist}
 License: GPLv2
 Url: https://libreswan.org/
 Source0: https://download.libreswan.org/%{?prever:development/}%{name}-%{version}%{?prever}.tar.gz
@@ -41,8 +41,6 @@ Source2: https://download.libreswan.org/cavs/ikev1_psk.fax.bz2
 Source3: https://download.libreswan.org/cavs/ikev2.fax.bz2
 %endif
 Patch: libreswan-4.6-ikev1-policy-defaults-to-drop.patch
-Patch: libreswan-4.9-cve-2023-23009.patch
-Patch: libreswan-4.9-cve-2023-30570.patch
 
 BuildRequires: audit-libs-devel
 BuildRequires: bison
@@ -198,6 +196,17 @@ certutil -N -d sql:$tmpdir --empty-password
 %doc %{_mandir}/*/*
 
 %changelog
+* Wed Aug  9 2023 Daiki Ueno <dueno@redhat.com> - 4.12-1
+- Update to 4.12 to fix CVE-2023-38710, CVE-2023-38711, CVE-2023-38712
+- Resolves: rhbz#2215956
+
+* Fri May 05 2023 Sahana Prasad <sahana@redhat.com> - 4.9-5
+- Just bumping up the version to include bugs for CVE-2023-2295. There is no
+  code fix for it. Fix for it is including the code fix for CVE-2023-30570.
+- Fix CVE-2023-2295 Regression of CVE-2023-30570 fixes in the
+  Red Hat Enterprise Linux
+- Resolves: rhbz#2189777, rhbz#2190148
+
 * Thu May 04 2023 Sahana Prasad <sahana@redhat.com> - 4.9-4
 - Just bumping up the version as an incorrect 9.3 build was created.
 - Related: rhbz#2187171
