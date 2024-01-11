@@ -36,8 +36,8 @@
 Name: libreswan
 Summary: IPsec implementation with IKEv1 and IKEv2 keying protocols
 # version is generated in the release script
-Version: 4.9
-Release: %{?prever:0.}3%{?prever:.%{prever}}%{?dist}
+Version: 4.12
+Release: %{?prever:0.}2%{?prever:.%{prever}}%{?dist}
 License: GPLv2
 Url: https://libreswan.org/
 
@@ -52,9 +52,7 @@ Patch1: libreswan-4.3-maintain-different-v1v2-split.patch
 Patch2: libreswan-3.32-1861360-nodefault-rsa-pss.patch
 Patch3: libreswan-4.1-maintain-obsolete-keywords.patch
 Patch6: libreswan-4.3-1934186-config.patch
-Patch7: libreswan-4.9-cve-2023-23009.patch
-Patch8: libreswan-4.9-2176248-authby-rsasig.patch
-Patch9: libreswan-4.9-cve-2023-30570.patch
+Patch7: libreswan-4.9-2176248-authby-rsasig.patch
 
 BuildRequires: audit-libs-devel
 BuildRequires: bison
@@ -114,8 +112,6 @@ Libreswan is based on Openswan-2.6.38 which in turn is based on FreeS/WAN-2.04
 %patch3 -p1
 %patch6 -p1
 %patch7 -p1
-%patch8 -p1
-%patch9 -p1
 
 # linking to freebl is not needed
 sed -i "s/-lfreebl //" mk/config.mk
@@ -219,20 +215,16 @@ certutil -N -d sql:$tmpdir --empty-password
 %attr(0644,root,root) %doc %{_mandir}/*/*
 
 %changelog
-* Fri May 05 2023 Sahana Prasad <sahana@redhat.com> - 4.9-3
-- Fix CVE-2023-30570: Malicious IKEv1 Aggressive Mode packets can crash
-  libreswan
+* Fri Aug 25 2023 Daiki Ueno <dueno@redhat.com> - 4.12-2
+- Resolves: rhbz#2234731 authby=rsasig fails in FIPS policy
+
+* Wed Aug  9 2023 Daiki Ueno <dueno@redhat.com> - 4.12-1
+- Update to 4.12 to fix CVE-2023-38710, CVE-2023-38711, CVE-2023-38712
+- Resolves: rhbz#2215955
+
+* Thu May 04 2023 Sahana Prasad <sahana@redhat.com> - 4.9-2
+- Fix CVE-2023-30570 Malicious IKEv1 Aggressive Mode packets can crash libreswan
 - Resolves: rhbz#2187179
-
-* Tue Apr 25 2023 Daiki Ueno <dueno@redhat.com> - 4.9-2.2
-- Update libreswan-4.9-2176248-authby-rsasig.patch
-
-* Fri Apr 14 2023 Daiki Ueno <dueno@redhat.com> - 4.9-2.1
-- Resolves: rhbz#2187647 authby=rsasig fails in FIPS policy
-
-* Tue Apr  4 2023 Daiki Ueno <dueno@redhat.com> - 4.9-2
-- Fix CVE-2023-23009: remote DoS via crafted TS payload with an
-  incorrect selector length (rhbz#2186127)
 
 * Mon Jan  9 2023 Daiki Ueno <dueno@redhat.com> - 4.9-1
 - Resolves: rhbz#2128672 Rebase libreswan to 4.9
