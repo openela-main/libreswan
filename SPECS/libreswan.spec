@@ -37,7 +37,7 @@ Name: libreswan
 Summary: IPsec implementation with IKEv1 and IKEv2 keying protocols
 # version is generated in the release script
 Version: 4.12
-Release: %{?prever:0.}2%{?prever:.%{prever}}%{?dist}
+Release: %{?prever:0.}2%{?prever:.%{prever}}%{?dist}.2
 License: GPLv2
 Url: https://libreswan.org/
 
@@ -53,6 +53,7 @@ Patch2: libreswan-3.32-1861360-nodefault-rsa-pss.patch
 Patch3: libreswan-4.1-maintain-obsolete-keywords.patch
 Patch6: libreswan-4.3-1934186-config.patch
 Patch7: libreswan-4.9-2176248-authby-rsasig.patch
+Patch8: libreswan-4.12-ikev2-auth-delete-state.patch
 
 BuildRequires: audit-libs-devel
 BuildRequires: bison
@@ -112,6 +113,7 @@ Libreswan is based on Openswan-2.6.38 which in turn is based on FreeS/WAN-2.04
 %patch3 -p1
 %patch6 -p1
 %patch7 -p1
+%patch8 -p1
 
 # linking to freebl is not needed
 sed -i "s/-lfreebl //" mk/config.mk
@@ -215,6 +217,12 @@ certutil -N -d sql:$tmpdir --empty-password
 %attr(0644,root,root) %doc %{_mandir}/*/*
 
 %changelog
+* Tue Apr 16 2024 Daiki Ueno <dueno@redhat.com> - 4.12-2.2
+- Fix patch application in the previous change
+
+* Mon Apr 15 2024 Daiki Ueno <dueno@redhat.com> - 4.12-2.1
+- Fix CVE-2024-2357 (RHEL-29731)
+
 * Fri Aug 25 2023 Daiki Ueno <dueno@redhat.com> - 4.12-2
 - Resolves: rhbz#2234731 authby=rsasig fails in FIPS policy
 
