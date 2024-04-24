@@ -1,0 +1,198 @@
+From 474d75be074799efa9e38f346d3fdb76dec3eead Mon Sep 17 00:00:00 2001
+From: Andrew Cagney <cagney@gnu.org>
+Date: Tue, 5 Dec 2023 13:55:37 -0500
+Subject: [PATCH] x509: unpack IPv6 general names based on length
+
+fix #1321
+---
+ programs/pluto/x509.c | 35 +++++++++++++++++++++++++++++------
+ 1 file changed, 29 insertions(+), 6 deletions(-)
+
+diff --git a/programs/pluto/x509.c b/programs/pluto/x509.c
+index fbbf5a553e..f7e97b9979 100644
+--- a/programs/pluto/x509.c
++++ b/programs/pluto/x509.c
+@@ -336,7 +336,7 @@ generalName_t *collect_rw_ca_candidates(struct msg_digest *md)
+  */
+ static void gntoid(struct id *id, const generalName_t *gn, struct logger *logger)
+ {
+-	*id = empty_id;
++	*id = empty_id; /* aka ID_NONE */
+ 
+ 	switch (gn->kind) {
+ 	case GN_DNS_NAME:	/* ID type: ID_FQDN */
+@@ -345,18 +345,37 @@ static void gntoid(struct id *id, const generalName_t *gn, struct logger *logger
+ 		break;
+ 	case GN_IP_ADDRESS:	/* ID type: ID_IPV4_ADDR */
+ 	{
++		const struct ip_info *afi = NULL;
++		for (enum ip_index i = 0; i < IP_INDEX_ROOF; i++) {
++			if (ip_families[i].ip_size == gn->name.len) {
++				afi = &ip_families[i];
++				break;
++			}
++		}
++		if (afi == NULL) {
++			llog(RC_LOG, logger,
++			     "warning: invalid IP_ADDRESS general name: %zu byte length is not valid",
++			     gn->name.len);
++			PEXPECT(logger, id->kind == ID_NONE);
++			return;
++		}
++
+ 		/*
+ 		 * XXX: why could this fail; and what happens when it
+ 		 * is ignored?
+ 		 */
+-		const struct ip_info *afi = &ipv4_info;
+-		id->kind = afi->id_ip_addr;
+-		err_t ugh = hunk_to_address(gn->name, afi, &id->ip_addr);
++		ip_address addr;
++		err_t ugh = hunk_to_address(gn->name, afi, &addr);
+ 		if (ugh != NULL) {
+ 			llog(RC_LOG, logger,
+-				    "warning: gntoid() failed to initaddr(): %s",
+-				    ugh);
++			     "warning: invalid IP_ADDRESS general name: %s",
++			     ugh);
++			PEXPECT(logger, id->kind == ID_NONE);
++			return;
+ 		}
++
++		id->kind = afi->id_ip_addr;
++		id->ip_addr = addr;
+ 		break;
+ 	}
+ 	case GN_RFC822_NAME:	/* ID type: ID_USER_FQDN */
+@@ -464,14 +483,18 @@ bool add_pubkey_from_nss_cert(struct pubkey_list **pubkey_db,
+ 		return false;
+ 	}
+ 
++	ldbg(logger, "adding cert using subject name");
+ 	replace_public_key(pubkey_db, &pk);
+ 	passert(pk == NULL); /*stolen*/
+ 
++	ldbg(logger, "adding cert using general names");
+ 	add_cert_san_pubkeys(pubkey_db, cert, logger);
+ 
+ 	if (keyid != NULL && keyid->kind != ID_DER_ASN1_DN &&
+ 			     keyid->kind != ID_NONE &&
+ 			     keyid->kind != ID_FROMCERT) {
++		id_buf idb;
++		ldbg(logger, "adding cert using keyid %s", str_id(keyid, &idb));
+ 		struct pubkey *pk2 = NULL;
+ 		diag_t d = create_pubkey_from_cert(keyid, cert, &pk2, logger);
+ 		if (d != NULL) {
+-- 
+2.44.0
+
+From 1e27be95cd710a840681d1a51913e6a32ce75a2a Mon Sep 17 00:00:00 2001
+From: Andrew Cagney <cagney@gnu.org>
+Date: Mon, 11 Mar 2024 17:18:51 -0400
+Subject: [PATCH] building: back-port ip_families[] and ip_index
+
+---
+ include/ip_index.h    | 27 +++++++++++++++++++++++++++
+ include/ip_info.h     |  7 +++++--
+ lib/libswan/ip_info.c |  9 ++++++---
+ 3 files changed, 38 insertions(+), 5 deletions(-)
+ create mode 100644 include/ip_index.h
+
+diff --git a/include/ip_index.h b/include/ip_index.h
+new file mode 100644
+index 0000000000..508589b05e
+--- /dev/null
++++ b/include/ip_index.h
+@@ -0,0 +1,27 @@
++/* ip address type index, for libreswan
++ *
++ * Copyright (C) 2022 Andrew Cagney
++ *
++ * This library is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU Library General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or (at your
++ * option) any later version.  See <https://www.gnu.org/licenses/lgpl-2.1.txt>.
++ *
++ * This library is distributed in the hope that it will be useful, but
++ * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
++ * or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU Library General Public
++ * License for more details.
++ *
++ */
++
++#ifndef IP_INDEX_H
++#define IP_INDEX_H
++
++enum ip_index {
++	IPv4_INDEX,
++	IPv6_INDEX,
++};
++
++#define IP_INDEX_ROOF (IPv6_INDEX+1)
++
++#endif
+diff --git a/include/ip_info.h b/include/ip_info.h
+index 40e99ef687..c1329a8569 100644
+--- a/include/ip_info.h
++++ b/include/ip_info.h
+@@ -9,6 +9,7 @@
+ #include "ip_subnet.h"
+ #include "ip_selector.h"
+ #include "ip_sockaddr.h"
++#include "ip_index.h"
+ 
+ struct ip_info {
+ 	/*
+@@ -113,8 +114,10 @@ struct ip_info {
+ 
+ };
+ 
+-extern const struct ip_info ipv4_info;
+-extern const struct ip_info ipv6_info;
++extern const struct ip_info ip_families[IP_INDEX_ROOF];
++
++#define ipv4_info ip_families[IPv4_INDEX]
++#define ipv6_info ip_families[IPv6_INDEX]
+ 
+ extern const struct ip_info *aftoinfo(int af);
+ 
+diff --git a/lib/libswan/ip_info.c b/lib/libswan/ip_info.c
+index 70cd6a368f..97296d3a11 100644
+--- a/lib/libswan/ip_info.c
++++ b/lib/libswan/ip_info.c
+@@ -158,7 +158,9 @@ static ip_port port_from_ipv6_sockaddr(const ip_sockaddr sa)
+ 
+ #define IPv4_FF { { 255, 255, 255, 255, }, }
+ 
+-const struct ip_info ipv4_info = {
++const struct ip_info ip_families[IP_INDEX_ROOF] = {
++
++	[IPv4_INDEX] = {
+ 
+ 	.ip_version = IPv4,
+ 	.ip_size = sizeof(struct in_addr),
+@@ -210,11 +212,11 @@ const struct ip_info ipv4_info = {
+ 	.id_ip_addr = ID_IPV4_ADDR,
+ 	.id_ip_addr_subnet = ID_IPV4_ADDR_SUBNET,
+ 	.id_ip_addr_range = ID_IPV4_ADDR_RANGE,
+-};
++	},
+ 
+ #define IPv6_FF { { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, }, }
+ 
+-const struct ip_info ipv6_info = {
++	[IPv6_INDEX] = {
+ 
+ 	.ip_version = IPv6,
+ 	.ip_size = sizeof(struct in6_addr),
+@@ -266,6 +268,7 @@ const struct ip_info ipv6_info = {
+ 	.id_ip_addr = ID_IPV6_ADDR,
+ 	.id_ip_addr_subnet = ID_IPV6_ADDR_SUBNET,
+ 	.id_ip_addr_range = ID_IPV6_ADDR_RANGE,
++	}
+ };
+ 
+ const struct ip_info *aftoinfo(int af)
+-- 
+2.44.0
+
