@@ -37,7 +37,7 @@ Name: libreswan
 Summary: IPsec implementation with IKEv1 and IKEv2 keying protocols
 # version is generated in the release script
 Version: 4.12
-Release: %{?prever:0.}2%{?prever:.%{prever}}%{?dist}.2
+Release: %{?prever:0.}2%{?prever:.%{prever}}%{?dist}.3
 License: GPLv2
 Url: https://libreswan.org/
 
@@ -217,11 +217,14 @@ certutil -N -d sql:$tmpdir --empty-password
 %attr(0644,root,root) %doc %{_mandir}/*/*
 
 %changelog
+* Wed Apr 17 2024 Daiki Ueno <dueno@redhat.com> - 4.12-2.3
+- Bump release to ensure el8 package is greater than el8_* packages
+
 * Tue Apr 16 2024 Daiki Ueno <dueno@redhat.com> - 4.12-2.2
 - Fix patch application in the previous change
 
 * Mon Apr 15 2024 Daiki Ueno <dueno@redhat.com> - 4.12-2.1
-- Fix CVE-2024-2357 (RHEL-29731)
+- Fix CVE-2024-2357 (RHEL-28742)
 
 * Fri Aug 25 2023 Daiki Ueno <dueno@redhat.com> - 4.12-2
 - Resolves: rhbz#2234731 authby=rsasig fails in FIPS policy
