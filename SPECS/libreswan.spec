@@ -37,7 +37,7 @@ Name: libreswan
 Summary: IPsec implementation with IKEv1 and IKEv2 keying protocols
 # version is generated in the release script
 Version: 4.12
-Release: %{?prever:0.}2%{?prever:.%{prever}}%{?dist}.3
+Release: %{?prever:0.}2%{?prever:.%{prever}}%{?dist}.4
 License: GPLv2
 Url: https://libreswan.org/
 
@@ -54,6 +54,7 @@ Patch3: libreswan-4.1-maintain-obsolete-keywords.patch
 Patch6: libreswan-4.3-1934186-config.patch
 Patch7: libreswan-4.9-2176248-authby-rsasig.patch
 Patch8: libreswan-4.12-ikev2-auth-delete-state.patch
+Patch9: libreswan-4.12-ikev1-compute-keymat-default.patch
 
 BuildRequires: audit-libs-devel
 BuildRequires: bison
@@ -114,6 +115,7 @@ Libreswan is based on Openswan-2.6.38 which in turn is based on FreeS/WAN-2.04
 %patch6 -p1
 %patch7 -p1
 %patch8 -p1
+%patch9 -p1
 
 # linking to freebl is not needed
 sed -i "s/-lfreebl //" mk/config.mk
@@ -217,6 +219,9 @@ certutil -N -d sql:$tmpdir --empty-password
 %attr(0644,root,root) %doc %{_mandir}/*/*
 
 %changelog
+* Thu Jun  6 2024 Daiki Ueno <dueno@redhat.com> - 4.12-2.4
+- Fix CVE-2024-3652 (RHEL-32482)
+
 * Wed Apr 17 2024 Daiki Ueno <dueno@redhat.com> - 4.12-2.3
 - Bump release to ensure el8 package is greater than el8_* packages
 
