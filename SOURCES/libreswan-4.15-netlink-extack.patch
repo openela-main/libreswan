@@ -1,0 +1,153 @@
+From 4f2af7c8c3afaaa63e8e16467de3441622a5314d Mon Sep 17 00:00:00 2001
+From: Daiki Ueno <dueno@redhat.com>
+Date: Tue, 21 May 2024 20:12:17 +0900
+Subject: [PATCH] kernel_xfrm: record extended ack from netlink response
+
+This enables pluto to log any error message reported through extended
+ACK attributes[1] in a netlink response, to make diagnostic easier
+when an error occurs.  Suggested by Sabrina Dubroca.
+
+1. https://docs.kernel.org/userspace-api/netlink/intro.html#ext-ack
+
+Signed-off-by: Daiki Ueno <dueno@redhat.com>
+Signed-off-by: Andrew Cagney <cagney@gnu.org>
+---
+ include/netlink_attrib.h     |  4 +++
+ lib/libswan/netlink_attrib.c | 29 +++++++++++++++++++++
+ programs/pluto/kernel_xfrm.c | 49 ++++++++++++++++++++++++++++++++++++
+ 3 files changed, 82 insertions(+)
+
+diff --git a/include/netlink_attrib.h b/include/netlink_attrib.h
+index 4c952ae3e9..fff35d83f1 100644
+--- a/include/netlink_attrib.h
++++ b/include/netlink_attrib.h
+@@ -46,4 +46,8 @@ void nl_addattrstrz(struct nlmsghdr *n, int maxlen, int type,
+ 		const char *str);
+ void nl_addattr32(struct nlmsghdr *n, int maxlen, int type, const uint32_t data);
+ 
++const struct nlattr *nl_getattr(const struct nlmsghdr *n, size_t *offset);
++const char *nl_getattrvalstrz(const struct nlmsghdr *n,
++			      const struct nlattr *attr);
++
+ #endif
+diff --git a/lib/libswan/netlink_attrib.c b/lib/libswan/netlink_attrib.c
+index 34bb4bec83..ccc08cba8f 100644
+--- a/lib/libswan/netlink_attrib.c
++++ b/lib/libswan/netlink_attrib.c
+@@ -66,3 +66,32 @@ void nl_addattr32(struct nlmsghdr *n, int maxlen, int type, const uint32_t data)
+ {
+ 	nl_addattr_l(n, maxlen, type, &data, sizeof(uint32_t));
+ }
++
++const struct nlattr *nl_getattr(const struct nlmsghdr *n, size_t *offset)
++{
++	struct nlattr *attr = (void *)n + NLMSG_HDRLEN + NLMSG_ALIGN(*offset);
++	struct nlattr *tail = (void *)n + NLMSG_ALIGN(n->nlmsg_len);
++
++	if (attr == tail) {
++		return NULL;
++	}
++
++	*offset += NLA_ALIGN(attr->nla_len);
++	return attr;
++}
++
++const char *nl_getattrvalstrz(const struct nlmsghdr *n,
++			      const struct nlattr *attr)
++{
++	struct nlattr *tail = (void *)n + NLMSG_ALIGN(n->nlmsg_len);
++
++	ptrdiff_t len = (void *)tail - (void *)attr;
++	if (len < (ptrdiff_t)sizeof(struct nlattr) ||
++	    attr->nla_len <= sizeof(struct nlattr) ||
++	    attr->nla_len > len ||
++	    !memchr(attr + NLA_HDRLEN, '\0', attr->nla_len - NLA_HDRLEN)) {
++		return NULL;
++	}
++
++	return (void *)attr + NLA_HDRLEN;
++}
+diff --git a/programs/pluto/kernel_xfrm.c b/programs/pluto/kernel_xfrm.c
+index eed307f42b..25d1b16bc9 100644
+--- a/programs/pluto/kernel_xfrm.c
++++ b/programs/pluto/kernel_xfrm.c
+@@ -260,6 +260,22 @@ static void init_netlink(struct logger *logger)
+ 			    "socket() in init_netlink()");
+ 	}
+ 
++#ifdef SOL_NETLINK
++	const int on = true;
++	if (setsockopt(nl_send_fd, SOL_NETLINK, NETLINK_CAP_ACK,
++		       (const void *)&on, sizeof(on)) < 0) {
++		llog_errno(RC_LOG, logger, errno, "xfrm: setsockopt(NETLINK_CAP_ACK) failed: ");
++	} else {
++		ldbg(logger, "xfrm: setsockopt(NETLINK_CAP_ACK) ok");
++	}
++	if (setsockopt(nl_send_fd, SOL_NETLINK, NETLINK_EXT_ACK,
++		       (const void *)&on, sizeof(on)) < 0) {
++		llog_errno(RC_LOG, logger, errno, "xfrm: setsockopt(NETLINK_EXT_ACK) failed: ");
++	} else {
++		ldbg(logger, "xfrm: setsockopt(NETLINK_EXT_ACK) ok");
++	}
++#endif
++
+ 	nl_xfrm_fd = cloexec_socket(AF_NETLINK, SOCK_DGRAM|SOCK_NONBLOCK, NETLINK_XFRM);
+ 	if (nl_xfrm_fd < 0) {
+ 		fatal_errno(PLUTO_EXIT_FAIL, logger, errno,
+@@ -301,6 +317,37 @@ static void init_netlink(struct logger *logger)
+ 	}
+ }
+ 
++static void llog_ext_ack(lset_t rc_flags, struct logger *logger,
++			 const struct nlmsghdr *n)
++{
++#ifdef SOL_NETLINK
++	if (n->nlmsg_type != NLMSG_ERROR ||
++	    !(n->nlmsg_flags & NLM_F_ACK_TLVS)) {
++		return;
++	}
++
++	struct nlmsgerr *err = (void *)n + NLMSG_HDRLEN;
++	size_t offset = sizeof(*err);
++	if (!(n->nlmsg_flags & NLM_F_CAPPED)) {
++		offset += err->msg.nlmsg_len - NLMSG_HDRLEN;
++	}
++
++	for (const struct nlattr *attr = nl_getattr(n, &offset);
++	     attr != NULL; attr = nl_getattr(n, &offset)) {
++		if ((attr->nla_type & NLA_TYPE_MASK) == NLMSGERR_ATTR_MSG) {
++			const char *msg = nl_getattrvalstrz(n, attr);
++			if (msg) {
++				llog(rc_flags, logger, "netlink ext_ack: %s",
++				     msg);
++			}
++		}
++	}
++#else
++	/* use the arguments */
++	ldbg(logger, "ignoring "PRI_LSET" %p", rc_flags, n);
++#endif
++}
++
+ /*
+  * sendrecv_xfrm_msg()
+  *
+@@ -403,6 +450,7 @@ static bool sendrecv_xfrm_msg(struct nlmsghdr *hdr,
+ 		if (rsp.u.e.error != 0) {
+ 			llog_error(logger, -rsp.u.e.error,
+ 				   "netlink response for %s %s", description, story);
++			llog_ext_ack(RC_LOG, logger, &rsp.n);
+ 			return false;
+ 		}
+ 		/*
+@@ -413,6 +461,7 @@ static bool sendrecv_xfrm_msg(struct nlmsghdr *hdr,
+ 		 */
+ 		dbg("netlink response for %s %s included non-error error",
+ 		    description, story);
++		llog_ext_ack(DEBUG_STREAM, logger, &rsp.n);
+ 		/* ignore */
+ 	}
+ 	if (rbuf == NULL) {
+-- 
+2.45.2
+

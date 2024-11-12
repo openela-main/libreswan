@@ -30,8 +30,8 @@
 Name: libreswan
 Summary: Internet Key Exchange (IKEv1 and IKEv2) implementation for IPsec
 # version is generated in the release script
-Version: 4.12
-Release: %{?prever:0.}2%{?prever:.%{prever}}%{?dist}.1
+Version: 4.15
+Release: %{?prever:0.}3%{?prever:.%{prever}}%{?dist}
 License: GPLv2
 Url: https://libreswan.org/
 Source0: https://download.libreswan.org/%{?prever:development/}%{name}-%{version}%{?prever}.tar.gz
@@ -41,9 +41,8 @@ Source2: https://download.libreswan.org/cavs/ikev1_psk.fax.bz2
 Source3: https://download.libreswan.org/cavs/ikev2.fax.bz2
 %endif
 Patch: libreswan-4.6-ikev1-policy-defaults-to-drop.patch
-Patch: libreswan-4.12-ikev2-auth-delete-state.patch
-Patch: libreswan-4.12-ipv6-san.patch
-Patch: libreswan-4.12-ikev1-compute-keymat-default.patch
+Patch: libreswan-4.15-ondemand-tcp.patch
+Patch: libreswan-4.15-netlink-extack.patch
 
 BuildRequires: audit-libs-devel
 BuildRequires: bison
@@ -199,12 +198,25 @@ certutil -N -d sql:$tmpdir --empty-password
 %doc %{_mandir}/*/*
 
 %changelog
-* Wed Jun  5 2024 Daiki Ueno <dueno@redhat.com> - 4.12-2.1
-- Fix CVE-2024-3652 (RHEL-40102)
+* Tue Aug  6 2024 Daiki Ueno <dueno@redhat.com> - 4.15-3
+- Fix release number
+
+* Tue Aug  6 2024 Daiki Ueno <dueno@redhat.com> - 4.15-2
+- Fix auto=ondemand connection initialization with TCP (RHEL-51879)
+- Make use of Netlink extack for additional error reporting (RHEL-51881)
+
+* Tue Jul 30 2024 Daiki Ueno <dueno@redhat.com> - 4.15-1
+- Update to 4.15 (RHEL-50006)
+
+* Thu Jul 11 2024 Daiki Ueno <dueno@redhat.com> - 4.12-4
+- Bump release to synchronize with el9_5 package
+
+* Wed Jun  5 2024 Daiki Ueno <dueno@redhat.com> - 4.12-3
+- Fix CVE-2024-3652 (RHEL-32483)
 
 * Thu Apr 11 2024 Daiki Ueno <dueno@redhat.com> - 4.12-2
-- Fix CVE-2024-2357 (RHEL-32761)
-- x509: unpack IPv6 general names based on length (RHEL-32718)
+- Fix CVE-2024-2357 (RHEL-28743)
+- x509: unpack IPv6 general names based on length (RHEL-32720)
 
 * Wed Aug  9 2023 Daiki Ueno <dueno@redhat.com> - 4.12-1
 - Update to 4.12 to fix CVE-2023-38710, CVE-2023-38711, CVE-2023-38712

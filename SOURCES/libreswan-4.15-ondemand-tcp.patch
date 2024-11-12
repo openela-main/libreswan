@@ -1,0 +1,52 @@
+From 0b91406427cf7292d61900991fd665f076b6d43f Mon Sep 17 00:00:00 2001
+From: Daiki Ueno <dueno@redhat.com>
+Date: Tue, 2 Jul 2024 20:37:07 +0900
+Subject: [PATCH] tcp: call kernel_ops->poke_ipsec_policy_hole before connect
+
+This fixes ondemand initiation with TCP.  Without the policy hole, a
+TCP handshake will not complete, as it cannot receive SYN-ACK packet
+in plaintext and thus connect blocks until timeout.
+
+Signed-off-by: Daiki Ueno <dueno@redhat.com>
+Signed-off-by: Andrew Cagney <cagney@gnu.org>
+---
+ programs/pluto/iface_tcp.c | 16 +++++++++-------
+ 1 file changed, 9 insertions(+), 7 deletions(-)
+
+diff --git a/programs/pluto/iface_tcp.c b/programs/pluto/iface_tcp.c
+index c63e8bfe4d..55fe639174 100644
+--- a/programs/pluto/iface_tcp.c
++++ b/programs/pluto/iface_tcp.c
+@@ -473,6 +473,15 @@ struct iface_endpoint *connect_to_tcp_endpoint(struct iface_dev *local_dev,
+ 		return NULL;
+ 	}
+ 
++	/* This needs to be called before connect, so TCP handshake
++	 * (in plaintext) completes. */
++	if (kernel_ops->poke_ipsec_policy_hole != NULL &&
++	    !kernel_ops->poke_ipsec_policy_hole(fd, afi, logger)) {
++		/* already logged */
++		close(fd);
++		return NULL;
++	}
++
+ 	/*
+ 	 * Connect
+ 	 *
+@@ -551,13 +560,6 @@ struct iface_endpoint *connect_to_tcp_endpoint(struct iface_dev *local_dev,
+ 		}
+ 	}
+ 
+-	if (kernel_ops->poke_ipsec_policy_hole != NULL &&
+-	    !kernel_ops->poke_ipsec_policy_hole(fd, afi, logger)) {
+-		/* already logged */
+-		close(fd);
+-		return NULL;
+-	}
+-
+ 	struct iface_endpoint *ifp =
+ 		alloc_iface_endpoint(fd, local_dev, &iketcp_iface_io,
+ 				     /*esp_encapsulation_enabled*/true,
+-- 
+2.45.2
+
