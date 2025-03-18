@@ -1,0 +1,57 @@
+From d0a468bc4ca54b3aa941f522afd4ef8ed279e3cd Mon Sep 17 00:00:00 2001
+From: Daiki Ueno <ueno@gnu.org>
+Date: Tue, 22 Oct 2024 07:53:20 +0900
+Subject: [PATCH] pluto: ignore CREATE_CHILD_SA request if crypto is in
+ progress
+
+Since commit 1f4cede653c865d84ea4dd045db05670d513d385, both initiator
+and responder drive CREATE_CHILD_SA processing with the same shared
+IKE SA, which may sometimes interleave.  This adds a guard at the
+entry to the responder code, to return STF_IGNORE in case any CRYPTO
+continuation is already in place, so that the initiator could
+retransmit after a timeout on their side.
+
+Signed-off-by: Daiki Ueno <ueno@gnu.org>
+---
+ programs/pluto/ikev2_create_child_sa.c | 18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
+
+diff --git a/programs/pluto/ikev2_create_child_sa.c b/programs/pluto/ikev2_create_child_sa.c
+index 951485d063..504fc58a6b 100644
+--- a/programs/pluto/ikev2_create_child_sa.c
++++ b/programs/pluto/ikev2_create_child_sa.c
+@@ -662,6 +662,15 @@ stf_status process_v2_CREATE_CHILD_SA_rekey_child_request(struct ike_sa *ike,
+ 							  struct child_sa *larval_child,
+ 							  struct msg_digest *md)
+ {
++	/*
++	 * CRYPTO continuation is ongoing as the same IKE SA is shared
++	 * between initiator and responder, ignore it for now and let
++	 * the initiator retransmit.
++	 */
++	if (verbose_state_busy(&ike->sa)) {
++		return STF_IGNORE;
++	}
++
+ 	struct child_sa *predecessor = NULL;
+ 	if (!find_v2N_REKEY_SA_child(ike, md, &predecessor)) {
+ 		record_v2N_response(ike->sa.st_logger, ike, md, v2N_INVALID_SYNTAX,
+@@ -870,6 +879,15 @@ stf_status process_v2_CREATE_CHILD_SA_new_child_request(struct ike_sa *ike,
+ 							struct child_sa *larval_child,
+ 							struct msg_digest *md)
+ {
++	/*
++	 * CRYPTO continuation is ongoing as the same IKE SA is shared
++	 * between initiator and responder, ignore it for now and let
++	 * the initiator retransmit.
++	 */
++	if (verbose_state_busy(&ike->sa)) {
++		return STF_IGNORE;
++	}
++
+ 	pexpect(larval_child == NULL);
+ 	larval_child = new_v2_child_state(ike->sa.st_connection,
+ 					  ike, IPSEC_SA, SA_RESPONDER,
+-- 
+2.47.0
+
