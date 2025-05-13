@@ -31,7 +31,7 @@ Name: libreswan
 Summary: Internet Key Exchange (IKEv1 and IKEv2) implementation for IPsec
 # version is generated in the release script
 Version: 4.15
-Release: %{?prever:0.}3%{?prever:.%{prever}}%{?dist}.3
+Release: %{?prever:0.}8%{?prever:.%{prever}}%{?dist}
 License: GPLv2
 Url: https://libreswan.org/
 Source0: https://download.libreswan.org/%{?prever:development/}%{name}-%{version}%{?prever}.tar.gz
@@ -200,14 +200,21 @@ certutil -N -d sql:$tmpdir --empty-password
 %doc %{_mandir}/*/*
 
 %changelog
-* Fri Jan 24 2025 Daiki Ueno <dueno@redhat.com> - 4.15-3.3
-- showhostkey: fix regression after RHEL-68755 (RHEL-75967)
+* Tue Jan 14 2025 Daiki Ueno <dueno@redhat.com> - 4.15-8
+- showhostkey: fix regression after RHEL-68047 (RHEL-70842)
 
-* Fri Nov 22 2024 Daiki Ueno <dueno@redhat.com> - 4.15-3.2
-- crypto: refcnt struct secret_pubkey_stuff when passing to helper thread (RHEL-68755)
+* Tue Dec 17 2024 Daiki Ueno <dueno@redhat.com> - 4.15-7
+- Remove libreswan-4.15-whack-fd-refcount.patch (RHEL-61461)
 
-* Tue Nov 12 2024 Daiki Ueno <dueno@redhat.com> - 4.15-3.1
-- pluto: ignore CREATE_CHILD_SA request if crypto is in progress (RHEL-71496)
+* Tue Dec  3 2024 Daiki Ueno <dueno@redhat.com> - 4.15-6
+- Update libreswan-4.15-whack-fd-refcount.patch to be more complete (RHEL-61461)
+
+* Fri Nov 22 2024 Daiki Ueno <dueno@redhat.com> - 4.15-5
+- crypto: refcnt struct secret_pubkey_stuff when passing to helper thread (RHEL-68047)
+
+* Tue Nov 12 2024 Daiki Ueno <dueno@redhat.com> - 4.15-4
+- pluto: fix refcounting of whack FD at CREATE_CHILD_SA request (RHEL-61461)
+- pluto: ignore CREATE_CHILD_SA request if crypto is in progress (RHEL-61461)
 
 * Tue Aug  6 2024 Daiki Ueno <dueno@redhat.com> - 4.15-3
 - Fix release number
