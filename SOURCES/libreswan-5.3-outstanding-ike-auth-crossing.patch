@@ -1,0 +1,1056 @@
+From f58dec967328c9b11b834c42b1506e2d261d8bb2 Mon Sep 17 00:00:00 2001
+From: Ondrej Moris <omoris@redhat.com>
+Date: Fri, 21 Nov 2025 22:42:33 +0100
+Subject: [PATCH 1/7] Add option reject-simultaneous-ike-auth
+
+Newly added option (default values is yes) decides what to
+do when IKE_AUTH request is received from the peer while having
+an outstanding IKE_AUTH request for the same connection.
+
+Signed-off-by: Ondrej Moris <omoris@redhat.com>
+Signed-off-by: Andrew Cagney <cagney@gnu.org>
+---
+ .../reject-simultaneous-ike-auth.xml          | 21 +++++++++++++++++++
+ configs/ipsec.conf.5.xml                      |  2 ++
+ include/ipsecconf/keywords.h                  |  1 +
+ include/whack.h                               |  1 +
+ lib/libswan/ipsecconf/keywords.c              |  1 +
+ lib/libswan/ipsecconf/starterwhack.c          |  1 +
+ programs/pluto/connections.c                  |  6 ++++++
+ programs/pluto/connections.h                  |  2 ++
+ programs/whack/whack.c                        |  7 +++++++
+ 9 files changed, 42 insertions(+)
+ create mode 100644 configs/d.ipsec.conf/reject-simultaneous-ike-auth.xml
+
+diff --git a/configs/d.ipsec.conf/reject-simultaneous-ike-auth.xml b/configs/d.ipsec.conf/reject-simultaneous-ike-auth.xml
+new file mode 100644
+index 0000000000..7c3f68c42d
+--- /dev/null
++++ b/configs/d.ipsec.conf/reject-simultaneous-ike-auth.xml
+@@ -0,0 +1,21 @@
++<varlistentry>
++  <term>
++    <option>reject-simultaneous-ike-auth</option>
++  </term>
++  <listitem>
++
++    <para>
++      When libreswan receives IKE_AUTH request from the peer while having
++      an outstanding IKE_AUTH request for the same connection, reject with
++      AUTHENTICATION_FAILED to avoid potential SA mismatch issues. This only
++      applies to permanent IKEv2 connections so that the revival mechanism
++      ensures connection retry.
++    </para>
++
++    <para>
++      The accepted values are <option>yes</option> (the default) or
++      <option>no</option>.
++    </para>
++
++  </listitem>
++</varlistentry>
+diff --git a/configs/ipsec.conf.5.xml b/configs/ipsec.conf.5.xml
+index 03f04106ae..eb0f69007d 100644
+--- a/configs/ipsec.conf.5.xml
++++ b/configs/ipsec.conf.5.xml
+@@ -25,6 +25,7 @@
+ <!ENTITY accept-redirect-to SYSTEM "d.ipsec.conf/accept-redirect-to.xml">
+ <!ENTITY aggressive SYSTEM "d.ipsec.conf/aggressive.xml">
+ <!ENTITY ah SYSTEM "d.ipsec.conf/ah.xml">
++<!ENTITY reject-simultaneous-ike-auth SYSTEM "d.ipsec.conf/reject-simultaneous-ike-auth.xml">
+ <!ENTITY audit-log SYSTEM "d.ipsec.conf/audit-log.xml">
+ <!ENTITY authby SYSTEM "d.ipsec.conf/authby.xml">
+ <!ENTITY author SYSTEM "d.ipsec.conf/author.xml">
+@@ -377,6 +378,7 @@
+ 	&failureshunt;
+ 	&negotiationshunt;
+ 	&debug;
++	&reject-simultaneous-ike-auth;
+       </variablelist>
+     </refsect2>
+   </refsect1>
+diff --git a/include/ipsecconf/keywords.h b/include/ipsecconf/keywords.h
+index bdbc00ee98..21b5954c52 100644
+--- a/include/ipsecconf/keywords.h
++++ b/include/ipsecconf/keywords.h
+@@ -201,6 +201,7 @@ enum config_conn_keyword {
+ 	KWS_CISCO_SPLIT,	/* send cisco unity VID */
+ 
+ 	KWYN_SEND_ESP_TFC_PADDING_NOT_SUPPORTED,
++	KWYN_REJECT_SIMULTANEOUS_IKE_AUTH,
+ 	KWYN_FAKE_STRONGSWAN,	/* send strongswan VID (required for twofish/serpent) */
+ 	KWYN_SEND_VENDORID,	/* per conn sending of our own libreswan vendorid */
+ 	KNCF_IKEPAD,		/* pad IKE packets to 4 bytes */
+diff --git a/include/whack.h b/include/whack.h
+index 85f38da0aa..76d6eb2908 100644
+--- a/include/whack.h
++++ b/include/whack.h
+@@ -409,6 +409,7 @@ struct whack_message {
+ 	const char *priority;
+ 	const char *tfc;
+ 	enum yn_options send_esp_tfc_padding_not_supported;
++	enum yn_options reject_simultaneous_ike_auth;
+ 
+ 	enum yn_options iptfs;
+ 	enum yn_options iptfs_fragmentation;
+diff --git a/lib/libswan/ipsecconf/keywords.c b/lib/libswan/ipsecconf/keywords.c
+index 1e42bf2a4a..6c662a9688 100644
+--- a/lib/libswan/ipsecconf/keywords.c
++++ b/lib/libswan/ipsecconf/keywords.c
+@@ -162,6 +162,7 @@ static const struct keyword_def config_conn_keyword[] = {
+ 
+   K("initial-contact",  LEMPTY,  kt_sparse_name,  KWYN_INITIAL_CONTACT, .sparse_names = &yn_option_names),
+   K("send-esp-tfc-padding-not-supported",  LEMPTY,  kt_sparse_name,  KWYN_SEND_ESP_TFC_PADDING_NOT_SUPPORTED, .sparse_names = &yn_option_names),
++  K("reject-simultaneous-ike-auth", LEMPTY, kt_sparse_name, KWYN_REJECT_SIMULTANEOUS_IKE_AUTH, .sparse_names = &yn_option_names),
+ 
+   K("iptfs",  LEMPTY,  kt_sparse_name,  KWYN_IPTFS, .sparse_names = &yn_option_names),
+   K("iptfs-fragmentation",  LEMPTY,  kt_sparse_name,  KWYN_IPTFS_FRAGMENTATION, .sparse_names = &yn_option_names),
+diff --git a/lib/libswan/ipsecconf/starterwhack.c b/lib/libswan/ipsecconf/starterwhack.c
+index 0e09a8e8d5..9a73769c15 100644
+--- a/lib/libswan/ipsecconf/starterwhack.c
++++ b/lib/libswan/ipsecconf/starterwhack.c
+@@ -232,6 +232,7 @@ int starter_whack_add_conn(const char *ctlsocket,
+ 		conn->values[KWYN_SEND_ESP_TFC_PADDING_NOT_SUPPORTED].option;
+ 	msg.nflog_group = conn->values[KWS_NFLOG_GROUP].string;
+ 	msg.reqid = conn->values[KWS_REQID].string;
++	msg.reject_simultaneous_ike_auth = conn->values[KWYN_REJECT_SIMULTANEOUS_IKE_AUTH].option;
+ 
+ 	if (conn->values[KNCF_TCP_REMOTEPORT].set) {
+ 		msg.tcp_remoteport = conn->values[KNCF_TCP_REMOTEPORT].option;
+diff --git a/programs/pluto/connections.c b/programs/pluto/connections.c
+index e949f56ebd..ca98dfb1e9 100644
+--- a/programs/pluto/connections.c
++++ b/programs/pluto/connections.c
+@@ -4894,6 +4894,12 @@ static diag_t extract_connection(const struct whack_message *wm,
+ 			   wm->send_esp_tfc_padding_not_supported,
+ 			   YN_NO, wm, c->logger);
+ 
++	if (wm->reject_simultaneous_ike_auth && ike_version < IKEv2) {
++		return diag("cannot specify reject-simultaneous-ike-auth for IKEv1");
++	}
++	config->reject_simultaneous_ike_auth = extract_yn("", "reject-simultaneous-ike-auth",
++			wm->reject_simultaneous_ike_auth, /*value_when_unset*/YN_YES, wm, c->logger);
++
+ 	/*
+ 	 * Since security labels use the same REQID for everything,
+ 	 * pre-assign it.
+diff --git a/programs/pluto/connections.h b/programs/pluto/connections.h
+index 0910fc9930..cd9cb331b6 100644
+--- a/programs/pluto/connections.h
++++ b/programs/pluto/connections.h
+@@ -431,6 +431,8 @@ struct config {
+ 		uint32_t id;
+ 	} ipsec_interface;
+ 
++	bool reject_simultaneous_ike_auth;
++
+ 	struct end_config end[END_ROOF];
+ };
+ 
+diff --git a/programs/whack/whack.c b/programs/whack/whack.c
+index a5a95045bf..5e47e009b8 100644
+--- a/programs/whack/whack.c
++++ b/programs/whack/whack.c
+@@ -111,6 +111,7 @@ static void help(void)
+ 		"	[--mtu <mtu>] \\\n"
+ 		"	[--priority <prio>] [--reqid <reqid>] \\\n"
+ 		"	[--tfc <size>] [--send-esp-tfc-padding-not-supported] \\\n"
++		"	[--reject-simultaneous-ike-auth] \\\n"
+ 		"	[--iptfs[={yes,no}] \\\n"
+ 		"         [--iptfs-fragmentation[={yes,no}]] \\\n"
+ 		"         [--iptfs-packet-size <size>] \\\n"
+@@ -516,6 +517,7 @@ enum opt {
+ 	CD_PRIORITY,
+ 	CD_TFC,
+ 	CD_SEND_ESP_TFC_PADDING_NOT_SUPPORTED,
++	CD_REJECT_SIMULTANEOUS_IKE_AUTH,
+ 	CD_PFS,
+ 	CD_REQID,
+ 	CD_NFLOG_GROUP,
+@@ -898,6 +900,7 @@ const struct option optarg_options[] = {
+ 	{ "tfc\0", required_argument, NULL, CD_TFC },
+ 	{ "send-esp-tfc-padding-not-supported\0yes|no", optional_argument, NULL, CD_SEND_ESP_TFC_PADDING_NOT_SUPPORTED },
+ 	{ "send-no-esp-tfc\0", no_argument, NULL, CD_SEND_ESP_TFC_PADDING_NOT_SUPPORTED },
++	{ "reject-simultaneous-ike-auth\0yes|no", optional_argument, NULL, CD_REJECT_SIMULTANEOUS_IKE_AUTH },
+ 	{ "pfs\0", optional_argument, NULL, CD_PFS },
+ 	{ "reqid\01-65535", required_argument, NULL, CD_REQID },
+ #ifdef USE_NFLOG
+@@ -2085,6 +2088,10 @@ int main(int argc, char **argv)
+ 				optarg_yn(logger, YN_YES);
+ 			continue;
+ 
++		case CD_REJECT_SIMULTANEOUS_IKE_AUTH: /* --reject-simultaneous-ike-auth */
++			msg.reject_simultaneous_ike_auth = optarg_yn(logger, YN_YES);
++			continue;
++
+ 		case CD_PFS:	/* --pfs */
+ 			msg.pfs = optarg_yn(logger, YN_YES);
+ 			continue;
+-- 
+2.52.0
+
+
+From 31ce0692217e18c3e5ed6cc2cded7c937b7ae1c9 Mon Sep 17 00:00:00 2001
+From: Ondrej Moris <omoris@redhat.com>
+Date: Fri, 13 Mar 2026 15:00:05 +0100
+Subject: [PATCH 2/7] ikev2: reject simultaneous IKE_AUTH requests
+
+If initiator has another IKE SA with IKE_AUTH request
+outstanding for the same permanent connection then send
+AUTHENTICATION_FAILED instead of IKE_AUTH response for this
+IKE_AUTH request and terminate current IKE SA. This is to
+prevent potential crossing streams scenario.
+
+This is now the default behavior and can be disabled by
+a connection option reject-simultaneous-ike-auth.
+
+Signed-off-by: Ondrej Moris <omoris@redhat.com>
+---
+ programs/pluto/ikev2_auth.c     | 53 +++++++++++++++++++++++++++++++++
+ programs/pluto/ikev2_auth.h     |  3 ++
+ programs/pluto/ikev2_child.c    | 13 ++++++++
+ programs/pluto/ikev2_ike_auth.c | 13 ++++++++
+ 4 files changed, 82 insertions(+)
+
+diff --git a/programs/pluto/ikev2_auth.c b/programs/pluto/ikev2_auth.c
+index 6e89bce58b..2e1b6df655 100644
+--- a/programs/pluto/ikev2_auth.c
++++ b/programs/pluto/ikev2_auth.c
+@@ -1044,3 +1044,56 @@ lset_t proposed_v2AUTH(struct ike_sa *ike,
+ 	}
+ 	}
+ }
++
++/*
++ * Check if a given permanent connection has another IKE SA with
++ * IKE_AUTH request outstanding. This is useful to detect potential
++ * IKE_AUTH crossing streams scenarios.
++ */
++bool has_outstanding_ike_auth_request(const struct connection *c,
++		const struct ike_sa *ike,
++		const struct msg_digest *md)
++{
++	/* Check can be disabled in a connection config */
++	if (!c->config->reject_simultaneous_ike_auth) {
++		return false;
++	}
++
++	/* Connection must be permanent and request must be incoming */
++	if (v2_msg_role(md) != MESSAGE_REQUEST || !is_permanent(c)) {
++		return false;
++	}
++
++	struct state_filter sf = {
++	  .connection_serialno = c->serialno,
++	  .search = {
++		.order = NEW2OLD,
++		.verbose.logger = ike->sa.logger,
++		.where = HERE,
++	  },
++	};
++
++	while (next_state(&sf)) {
++		if (!IS_IKE_SA(sf.st)) {
++			continue;
++		}
++
++		struct ike_sa *simultaneous_ike = pexpect_ike_sa(sf.st);
++		if (simultaneous_ike == NULL || simultaneous_ike == ike) {
++			continue;
++		} else if (simultaneous_ike->sa.st_sa_role != SA_INITIATOR) {
++			continue;
++		} else if (!v2_msgid_request_outstanding(simultaneous_ike)) {
++			continue;
++		}
++
++		const struct v2_exchange *outstanding_request =
++			simultaneous_ike->sa.st_v2_msgid_windows.initiator.exchange;
++		if (outstanding_request != NULL && outstanding_request->type == ISAKMP_v2_IKE_AUTH) {
++			llog(RC_LOG, ike->sa.logger, "IKE SA "PRI_SO" has outstanding IKE_AUTH request",
++					pri_so(simultaneous_ike->sa.st_serialno));
++			return true;
++		}
++	}
++	return false;
++}
+diff --git a/programs/pluto/ikev2_auth.h b/programs/pluto/ikev2_auth.h
+index 13ee71c36d..d616534507 100644
+--- a/programs/pluto/ikev2_auth.h
++++ b/programs/pluto/ikev2_auth.h
+@@ -85,4 +85,7 @@ struct crypt_mac v2_remote_id_hash(const struct ike_sa *ike, const char *why,
+ 
+ lset_t proposed_v2AUTH(struct ike_sa *ike, struct msg_digest *md);
+ 
++bool has_outstanding_ike_auth_request(const struct connection *c,
++		const struct ike_sa *ike,
++		const struct msg_digest *md);
+ #endif
+diff --git a/programs/pluto/ikev2_child.c b/programs/pluto/ikev2_child.c
+index 49aaff98a2..e53f53f4b3 100644
+--- a/programs/pluto/ikev2_child.c
++++ b/programs/pluto/ikev2_child.c
+@@ -68,6 +68,7 @@
+ #include "ikev2_notification.h"
+ #include "iface.h"
+ #include "nat_traversal.h"
++#include "ikev2_auth.h"
+ 
+ static bool emit_v2_child_response_payloads(struct ike_sa *ike,
+ 					    const struct child_sa *child,
+@@ -1029,6 +1030,18 @@ static v2_notification_t process_v2_IKE_AUTH_request_child_sa_payloads(struct ik
+ 		ldbg_sa(child, "skipping TS processing, mainly to stop tests failing but rumored to cause connection flips?!?");
+ 	}
+ 
++	/* It is possible that Child SA switched to permanent connection
++	 * where initiator has IKE SA with IKE_AUTH request outstanding,
++	 * in that case send AUTHENTICATION_FAILED and terminate this IKE SA.
++	 * This is to prevent potential crossing streams scenario for
++	 * IKE AUTH exchange.
++	 */
++	if (has_outstanding_ike_auth_request(child->sa.st_connection, ike, md)) {
++		record_v2N_response(ike->sa.logger, ike, md, v2N_AUTHENTICATION_FAILED,
++				empty_shunk, ENCRYPTED_PAYLOAD);
++		return v2N_AUTHENTICATION_FAILED;
++	}
++
+ 	n = process_childs_v2SA_payload("IKE_AUTH responder matching remote ESP/AH proposals",
+ 					ike, child, md,
+ 					child->sa.st_connection->config->child_sa.v2_ike_auth_proposals,
+diff --git a/programs/pluto/ikev2_ike_auth.c b/programs/pluto/ikev2_ike_auth.c
+index ba5aeace88..f70c06e9ef 100644
+--- a/programs/pluto/ikev2_ike_auth.c
++++ b/programs/pluto/ikev2_ike_auth.c
+@@ -683,6 +683,19 @@ stf_status process_v2_IKE_AUTH_request_standard_payloads(struct ike_sa *ike, str
+ 	 */
+ 
+ 	const struct connection *c = ike->sa.st_connection;
++
++	/* If initiator has another IKE SA with IKE_AUTH request
++	 * outstanding for the same permanent connection then send
++	 * AUTHENTICATION_FAILED instead of IKE_AUTH response for this
++	 * IKE_AUTH request and terminate current IKE SA. This is to
++	 * prevent potential crossing streams scenario.
++	 */
++	if (has_outstanding_ike_auth_request(c, ike, md)) {
++		record_v2N_response(ike->sa.logger, ike, md, v2N_AUTHENTICATION_FAILED,
++				empty_shunk, ENCRYPTED_PAYLOAD);
++		return STF_FATAL;
++	}
++
+ 	bool found_ppk = false;
+ 
+ 	/*
+-- 
+2.52.0
+
+
+From 877c8c9c2fd963bb23842cdddf798b34f7e6d42f Mon Sep 17 00:00:00 2001
+From: Daiki Ueno <dueno@redhat.com>
+Date: Sat, 17 Jan 2026 13:28:39 +0900
+Subject: [PATCH 3/7] pluto: reject crossing IKE_AUTH request only for the one
+ side
+
+When an IKE_AUTH request is crossed, both sides previously rejected it
+by sending AUTHENTICATION_FAILED, resulting in no IKE_SA being
+established. This patch relaxes the condition and make the one outlive
+the other.
+
+Suggested-by: Ondrej Moris <omoris@redhat.com>
+Signed-off-by: Daiki Ueno <dueno@redhat.com>
+---
+ include/ike_spi.h               |  1 +
+ programs/pluto/ike_spi.c        | 11 ++++++++++
+ programs/pluto/ikev2_auth.c     | 10 ++++-----
+ programs/pluto/ikev2_auth.h     |  2 +-
+ programs/pluto/ikev2_child.c    | 35 ++++++++++++++++++++++++++++----
+ programs/pluto/ikev2_ike_auth.c | 36 +++++++++++++++++++++++++++++----
+ 6 files changed, 81 insertions(+), 14 deletions(-)
+
+diff --git a/include/ike_spi.h b/include/ike_spi.h
+index 0c05542bae..376c120c0e 100644
+--- a/include/ike_spi.h
++++ b/include/ike_spi.h
+@@ -39,6 +39,7 @@ typedef struct {
+ } ike_spis_t;
+ 
+ bool ike_spis_eq(const ike_spis_t *lhs, const ike_spis_t *rhs);
++bool ike_spis_gt(const ike_spis_t *lhs, const ike_spis_t *rhs);
+ 
+ /*
+  * Need to handle two cases:
+diff --git a/programs/pluto/ike_spi.c b/programs/pluto/ike_spi.c
+index 312c835bed..d7bb73a6e8 100644
+--- a/programs/pluto/ike_spi.c
++++ b/programs/pluto/ike_spi.c
+@@ -42,6 +42,17 @@ bool ike_spis_eq(const ike_spis_t *lhs, const ike_spis_t *rhs)
+ 		ike_spi_eq(&lhs->responder, &rhs->responder));
+ }
+ 
++bool ike_spis_gt(const ike_spis_t *lhs, const ike_spis_t *rhs)
++{
++	int d = memcmp(lhs->initiator.bytes, rhs->initiator.bytes,
++			    sizeof(lhs->initiator.bytes));
++	if (d == 0) {
++		d = memcmp(lhs->responder.bytes, rhs->responder.bytes,
++			   sizeof(lhs->responder.bytes));
++	}
++	return d > 0;
++}
++
+ static struct {
+ 	uint8_t bytes[SHA2_256_DIGEST_SIZE];
+ } ike_spi_secret;
+diff --git a/programs/pluto/ikev2_auth.c b/programs/pluto/ikev2_auth.c
+index 2e1b6df655..ee36ef8b03 100644
+--- a/programs/pluto/ikev2_auth.c
++++ b/programs/pluto/ikev2_auth.c
+@@ -1050,18 +1050,18 @@ lset_t proposed_v2AUTH(struct ike_sa *ike,
+  * IKE_AUTH request outstanding. This is useful to detect potential
+  * IKE_AUTH crossing streams scenarios.
+  */
+-bool has_outstanding_ike_auth_request(const struct connection *c,
++struct ike_sa *get_sa_with_outstanding_ike_auth_request(const struct connection *c,
+ 		const struct ike_sa *ike,
+ 		const struct msg_digest *md)
+ {
+ 	/* Check can be disabled in a connection config */
+ 	if (!c->config->reject_simultaneous_ike_auth) {
+-		return false;
++		return NULL;
+ 	}
+ 
+ 	/* Connection must be permanent and request must be incoming */
+ 	if (v2_msg_role(md) != MESSAGE_REQUEST || !is_permanent(c)) {
+-		return false;
++		return NULL;
+ 	}
+ 
+ 	struct state_filter sf = {
+@@ -1092,8 +1092,8 @@ bool has_outstanding_ike_auth_request(const struct connection *c,
+ 		if (outstanding_request != NULL && outstanding_request->type == ISAKMP_v2_IKE_AUTH) {
+ 			llog(RC_LOG, ike->sa.logger, "IKE SA "PRI_SO" has outstanding IKE_AUTH request",
+ 					pri_so(simultaneous_ike->sa.st_serialno));
+-			return true;
++			return simultaneous_ike;
+ 		}
+ 	}
+-	return false;
++	return NULL;
+ }
+diff --git a/programs/pluto/ikev2_auth.h b/programs/pluto/ikev2_auth.h
+index d616534507..bb659ce88f 100644
+--- a/programs/pluto/ikev2_auth.h
++++ b/programs/pluto/ikev2_auth.h
+@@ -85,7 +85,7 @@ struct crypt_mac v2_remote_id_hash(const struct ike_sa *ike, const char *why,
+ 
+ lset_t proposed_v2AUTH(struct ike_sa *ike, struct msg_digest *md);
+ 
+-bool has_outstanding_ike_auth_request(const struct connection *c,
++struct ike_sa *get_sa_with_outstanding_ike_auth_request(const struct connection *c,
+ 		const struct ike_sa *ike,
+ 		const struct msg_digest *md);
+ #endif
+diff --git a/programs/pluto/ikev2_child.c b/programs/pluto/ikev2_child.c
+index e53f53f4b3..09b5862cd0 100644
+--- a/programs/pluto/ikev2_child.c
++++ b/programs/pluto/ikev2_child.c
+@@ -69,6 +69,7 @@
+ #include "iface.h"
+ #include "nat_traversal.h"
+ #include "ikev2_auth.h"
++#include "terminate.h"
+ 
+ static bool emit_v2_child_response_payloads(struct ike_sa *ike,
+ 					    const struct child_sa *child,
+@@ -1036,10 +1037,36 @@ static v2_notification_t process_v2_IKE_AUTH_request_child_sa_payloads(struct ik
+ 	 * This is to prevent potential crossing streams scenario for
+ 	 * IKE AUTH exchange.
+ 	 */
+-	if (has_outstanding_ike_auth_request(child->sa.st_connection, ike, md)) {
+-		record_v2N_response(ike->sa.logger, ike, md, v2N_AUTHENTICATION_FAILED,
+-				empty_shunk, ENCRYPTED_PAYLOAD);
+-		return v2N_AUTHENTICATION_FAILED;
++	struct ike_sa *simultaneous_ike =
++		get_sa_with_outstanding_ike_auth_request(child->sa.st_connection, ike, md);
++	if (simultaneous_ike != NULL) {
++		/* Compare our initiated SPI vs their initiated SPI
++		 * from the message. Note that the ordering doesn't
++		 * matter, but it ensures that both sides have the
++		 * same consensus on which IKE SA should be dropped.
++		 */
++		if (ike_spis_gt(&simultaneous_ike->sa.st_ike_spis,
++				&ike->sa.st_ike_spis)) {
++			/* Our IKE SA with oustanding IKE AUTH request
++			 * has SPI higher, delete this IKE SA, keep
++			 * the simultaneous_ike.
++			 */
++			ldbg(ike->sa.logger, "preferring the outstanding "PRI_SO" over the current "PRI_SO,
++			     pri_so(simultaneous_ike->sa.st_serialno),
++			     pri_so(ike->sa.st_serialno));
++			record_v2N_response(ike->sa.logger, ike, md, v2N_AUTHENTICATION_FAILED,
++					    empty_shunk, ENCRYPTED_PAYLOAD);
++			return v2N_AUTHENTICATION_FAILED;
++		} else {
++			/* IKE SA for the current IKE AUTH request has
++			 * SPI higher, continue with IKE AUTH reply
++			 * and drop the other one.
++			 */
++			ldbg(ike->sa.logger, "preferring the current "PRI_SO" over the outstanding "PRI_SO"",
++			     pri_so(ike->sa.st_serialno),
++			     pri_so(simultaneous_ike->sa.st_serialno));
++			terminate_ike_family(&simultaneous_ike, REASON_SUPERSEDED_BY_NEW_SA, HERE);
++		}
+ 	}
+ 
+ 	n = process_childs_v2SA_payload("IKE_AUTH responder matching remote ESP/AH proposals",
+diff --git a/programs/pluto/ikev2_ike_auth.c b/programs/pluto/ikev2_ike_auth.c
+index f70c06e9ef..406469dc75 100644
+--- a/programs/pluto/ikev2_ike_auth.c
++++ b/programs/pluto/ikev2_ike_auth.c
+@@ -76,6 +76,8 @@
+ #include "ikev2_notification.h"
+ #include "peer_id.h"
+ #include "ddos.h"
++#include "ikev2_nat.h"
++#include "terminate.h"
+ 
+ static ikev2_state_transition_fn process_v2_IKE_AUTH_request;
+ 
+@@ -690,10 +692,36 @@ stf_status process_v2_IKE_AUTH_request_standard_payloads(struct ike_sa *ike, str
+ 	 * IKE_AUTH request and terminate current IKE SA. This is to
+ 	 * prevent potential crossing streams scenario.
+ 	 */
+-	if (has_outstanding_ike_auth_request(c, ike, md)) {
+-		record_v2N_response(ike->sa.logger, ike, md, v2N_AUTHENTICATION_FAILED,
+-				empty_shunk, ENCRYPTED_PAYLOAD);
+-		return STF_FATAL;
++	struct ike_sa *simultaneous_ike =
++		get_sa_with_outstanding_ike_auth_request(c, ike, md);
++	if (simultaneous_ike != NULL) {
++		/* Compare our initiated SPIs vs their initiated SPIs
++		 * from the message. Note that the ordering doesn't
++		 * matter, but it ensures that both sides have the
++		 * same consensus on which IKE SA should be dropped.
++		 */
++		if (ike_spis_gt(&simultaneous_ike->sa.st_ike_spis,
++				&ike->sa.st_ike_spis)) {
++			/* Our IKE SA with oustanding IKE AUTH request
++			 * has SPI higher, delete this IKE SA, keep
++			 * the simultaneous_ike.
++			 */
++			ldbg(ike->sa.logger, "preferring the outstanding "PRI_SO" over the current "PRI_SO,
++			     pri_so(simultaneous_ike->sa.st_serialno),
++			     pri_so(ike->sa.st_serialno));
++			record_v2N_response(ike->sa.logger, ike, md, v2N_AUTHENTICATION_FAILED,
++					    empty_shunk, ENCRYPTED_PAYLOAD);
++			return STF_FATAL;
++		} else {
++			/* IKE SA for the current IKE AUTH request has
++			 * SPI higher, continue with IKE AUTH reply
++			 * and drop the other one.
++			 */
++			ldbg(ike->sa.logger, "preferring the current "PRI_SO" over the outstanding "PRI_SO"",
++			     pri_so(ike->sa.st_serialno),
++			     pri_so(simultaneous_ike->sa.st_serialno));
++			terminate_ike_family(&simultaneous_ike, REASON_SUPERSEDED_BY_NEW_SA, HERE);
++		}
+ 	}
+ 
+ 	bool found_ppk = false;
+-- 
+2.52.0
+
+
+From f35e32abc6b1e8d027ce811f0954f4b5de618f68 Mon Sep 17 00:00:00 2001
+From: Ondrej Moris <omoris@redhat.com>
+Date: Sun, 25 Jan 2026 19:41:25 +0100
+Subject: [PATCH 4/7] ikev2: refactor simultaneous IKE_AUTH logic
+
+1. Moved decision which IKE to reject into the function.
+2. Renamed function to better capture its new structure.
+
+Signed-off-by: Ondrej Moris <omoris@redhat.com>
+---
+ programs/pluto/ikev2_auth.c     | 80 +++++++++++++++++++++++----------
+ programs/pluto/ikev2_auth.h     |  6 +--
+ programs/pluto/ikev2_child.c    | 44 +++++-------------
+ programs/pluto/ikev2_ike_auth.c | 43 +++++-------------
+ 4 files changed, 80 insertions(+), 93 deletions(-)
+
+diff --git a/programs/pluto/ikev2_auth.c b/programs/pluto/ikev2_auth.c
+index ee36ef8b03..3c61e45cdd 100644
+--- a/programs/pluto/ikev2_auth.c
++++ b/programs/pluto/ikev2_auth.c
+@@ -1046,13 +1046,23 @@ lset_t proposed_v2AUTH(struct ike_sa *ike,
+ }
+ 
+ /*
+- * Check if a given permanent connection has another IKE SA with
+- * IKE_AUTH request outstanding. This is useful to detect potential
+- * IKE_AUTH crossing streams scenarios.
++ * Check relevant simultaneous IKE_AUTH requests and decide
++ * which IKE SA is going to be rejected (if any). This is goint
++ * to be called when processing IKE_AUTH request from the responder
++ *
++ * Relevant:
++ *	- same connection
++ *	- initiating IKE
++ *	- non-established with IKE_AUTH request waiting for reply
++ *
++ * Returns:
++ *  - ike: reject current IKE_AUTH request
++ *  - other IKE SA than ike: terminate it, keep ike
++ *  - NULL: no simultaneous IKE SA
+  */
+-struct ike_sa *get_sa_with_outstanding_ike_auth_request(const struct connection *c,
+-		const struct ike_sa *ike,
+-		const struct msg_digest *md)
++struct ike_sa *check_simultaneous_ike_auth(const struct connection *c,
++               const struct ike_sa *ike,
++               const struct msg_digest *md)
+ {
+ 	/* Check can be disabled in a connection config */
+ 	if (!c->config->reject_simultaneous_ike_auth) {
+@@ -1065,35 +1075,57 @@ struct ike_sa *get_sa_with_outstanding_ike_auth_request(const struct connection
+ 	}
+ 
+ 	struct state_filter sf = {
+-	  .connection_serialno = c->serialno,
+-	  .search = {
+-		.order = NEW2OLD,
+-		.verbose.logger = ike->sa.logger,
+-		.where = HERE,
+-	  },
++		.connection_serialno = c->serialno,
++		.search = {
++			.order = NEW2OLD,
++			.verbose.logger = ike->sa.logger,
++			.where = HERE,
++		},
+ 	};
+ 
++	struct ike_sa *simultaneous_ike = NULL;
++
+ 	while (next_state(&sf)) {
+ 		if (!IS_IKE_SA(sf.st)) {
+ 			continue;
+ 		}
+ 
+-		struct ike_sa *simultaneous_ike = pexpect_ike_sa(sf.st);
+-		if (simultaneous_ike == NULL || simultaneous_ike == ike) {
+-			continue;
+-		} else if (simultaneous_ike->sa.st_sa_role != SA_INITIATOR) {
++		struct ike_sa *candidate = pexpect_ike_sa(sf.st);
++
++		if (candidate == NULL || candidate == ike) {
+ 			continue;
+-		} else if (!v2_msgid_request_outstanding(simultaneous_ike)) {
++		} else if (candidate->sa.st_sa_role != SA_INITIATOR) {
+ 			continue;
+ 		}
+ 
+-		const struct v2_exchange *outstanding_request =
+-			simultaneous_ike->sa.st_v2_msgid_windows.initiator.exchange;
+-		if (outstanding_request != NULL && outstanding_request->type == ISAKMP_v2_IKE_AUTH) {
+-			llog(RC_LOG, ike->sa.logger, "IKE SA "PRI_SO" has outstanding IKE_AUTH request",
+-					pri_so(simultaneous_ike->sa.st_serialno));
+-			return simultaneous_ike;
++		/* Does candidate has IKE_AUTH request outstanding? */
++		if (v2_msgid_request_outstanding(candidate)) {
++			const struct v2_exchange *outstanding_request = candidate->sa.st_v2_msgid_windows.initiator.exchange;
++			if (outstanding_request != NULL && outstanding_request->type == ISAKMP_v2_IKE_AUTH) {
++				llog(RC_LOG, ike->sa.logger, "IKE SA "PRI_SO" has outstanding IKE_AUTH request",
++						pri_so(candidate->sa.st_serialno));
++				simultaneous_ike = candidate;
++				break;
++			}
+ 		}
+ 	}
+-	return NULL;
++
++	/* No simultaneous IKE found */
++	if (simultaneous_ike == NULL) {
++		return NULL;
++	}
++
++	/* Simultaneous IKE found, we need to decide if we keep that one or current IKE.
++	 *
++	 * We keep one with higher SPI.
++	 */
++	if (ike_spis_gt(&simultaneous_ike->sa.st_ike_spis, &ike->sa.st_ike_spis)) {
++		ldbg(ike->sa.logger, "preferring the simultaneous IKE SA "PRI_SO" over the current IKE SA "PRI_SO,
++				pri_so(simultaneous_ike->sa.st_serialno), pri_so(ike->sa.st_serialno));
++		return (struct ike_sa *) ike;
++  } else {
++		ldbg(ike->sa.logger, "preferring the current IKE SA "PRI_SO" over the simultanoues IKE SA "PRI_SO"",
++				pri_so(ike->sa.st_serialno), pri_so(simultaneous_ike->sa.st_serialno));
++		return simultaneous_ike;
++	}
+ }
+diff --git a/programs/pluto/ikev2_auth.h b/programs/pluto/ikev2_auth.h
+index bb659ce88f..1c25479ed7 100644
+--- a/programs/pluto/ikev2_auth.h
++++ b/programs/pluto/ikev2_auth.h
+@@ -85,7 +85,7 @@ struct crypt_mac v2_remote_id_hash(const struct ike_sa *ike, const char *why,
+ 
+ lset_t proposed_v2AUTH(struct ike_sa *ike, struct msg_digest *md);
+ 
+-struct ike_sa *get_sa_with_outstanding_ike_auth_request(const struct connection *c,
+-		const struct ike_sa *ike,
+-		const struct msg_digest *md);
++struct ike_sa *check_simultaneous_ike_auth(const struct connection *c,
++               const struct ike_sa *ike,
++               const struct msg_digest *md);
+ #endif
+diff --git a/programs/pluto/ikev2_child.c b/programs/pluto/ikev2_child.c
+index 09b5862cd0..9763112ddf 100644
+--- a/programs/pluto/ikev2_child.c
++++ b/programs/pluto/ikev2_child.c
+@@ -1032,41 +1032,19 @@ static v2_notification_t process_v2_IKE_AUTH_request_child_sa_payloads(struct ik
+ 	}
+ 
+ 	/* It is possible that Child SA switched to permanent connection
+-	 * where initiator has IKE SA with IKE_AUTH request outstanding,
+-	 * in that case send AUTHENTICATION_FAILED and terminate this IKE SA.
+-	 * This is to prevent potential crossing streams scenario for
++	 * where initiator has IKE SA with IKE_AUTH request outstanding
++	 * (or recently established IKE SA) in that case keep only one of
++	 * them. This is to prevent potential crossing streams scenario for
+ 	 * IKE AUTH exchange.
+ 	 */
+-	struct ike_sa *simultaneous_ike =
+-		get_sa_with_outstanding_ike_auth_request(child->sa.st_connection, ike, md);
+-	if (simultaneous_ike != NULL) {
+-		/* Compare our initiated SPI vs their initiated SPI
+-		 * from the message. Note that the ordering doesn't
+-		 * matter, but it ensures that both sides have the
+-		 * same consensus on which IKE SA should be dropped.
+-		 */
+-		if (ike_spis_gt(&simultaneous_ike->sa.st_ike_spis,
+-				&ike->sa.st_ike_spis)) {
+-			/* Our IKE SA with oustanding IKE AUTH request
+-			 * has SPI higher, delete this IKE SA, keep
+-			 * the simultaneous_ike.
+-			 */
+-			ldbg(ike->sa.logger, "preferring the outstanding "PRI_SO" over the current "PRI_SO,
+-			     pri_so(simultaneous_ike->sa.st_serialno),
+-			     pri_so(ike->sa.st_serialno));
+-			record_v2N_response(ike->sa.logger, ike, md, v2N_AUTHENTICATION_FAILED,
+-					    empty_shunk, ENCRYPTED_PAYLOAD);
+-			return v2N_AUTHENTICATION_FAILED;
+-		} else {
+-			/* IKE SA for the current IKE AUTH request has
+-			 * SPI higher, continue with IKE AUTH reply
+-			 * and drop the other one.
+-			 */
+-			ldbg(ike->sa.logger, "preferring the current "PRI_SO" over the outstanding "PRI_SO"",
+-			     pri_so(ike->sa.st_serialno),
+-			     pri_so(simultaneous_ike->sa.st_serialno));
+-			terminate_ike_family(&simultaneous_ike, REASON_SUPERSEDED_BY_NEW_SA, HERE);
+-		}
++	struct ike_sa *ike_to_reject = check_simultaneous_ike_auth(child->sa.st_connection, ike, md);
++	if (ike_to_reject == ike) {
++		/* Reject current IKE_AUTH request */
++		record_v2N_response(ike->sa.logger, ike, md, v2N_AUTHENTICATION_FAILED, empty_shunk, ENCRYPTED_PAYLOAD);
++		return v2N_AUTHENTICATION_FAILED;
++	} else if (ike_to_reject != NULL) {
++		/* Terminate the other IKE SA, continue with current */
++		terminate_ike_family(&ike_to_reject, REASON_SUPERSEDED_BY_NEW_SA, HERE);
+ 	}
+ 
+ 	n = process_childs_v2SA_payload("IKE_AUTH responder matching remote ESP/AH proposals",
+diff --git a/programs/pluto/ikev2_ike_auth.c b/programs/pluto/ikev2_ike_auth.c
+index 406469dc75..c9eb40e420 100644
+--- a/programs/pluto/ikev2_ike_auth.c
++++ b/programs/pluto/ikev2_ike_auth.c
+@@ -687,41 +687,18 @@ stf_status process_v2_IKE_AUTH_request_standard_payloads(struct ike_sa *ike, str
+ 	const struct connection *c = ike->sa.st_connection;
+ 
+ 	/* If initiator has another IKE SA with IKE_AUTH request
+-	 * outstanding for the same permanent connection then send
+-	 * AUTHENTICATION_FAILED instead of IKE_AUTH response for this
+-	 * IKE_AUTH request and terminate current IKE SA. This is to
++	 * outstanding for the same permanent connection (or recently
++	 * established one) then we keep only one of them. This is to
+ 	 * prevent potential crossing streams scenario.
+ 	 */
+-	struct ike_sa *simultaneous_ike =
+-		get_sa_with_outstanding_ike_auth_request(c, ike, md);
+-	if (simultaneous_ike != NULL) {
+-		/* Compare our initiated SPIs vs their initiated SPIs
+-		 * from the message. Note that the ordering doesn't
+-		 * matter, but it ensures that both sides have the
+-		 * same consensus on which IKE SA should be dropped.
+-		 */
+-		if (ike_spis_gt(&simultaneous_ike->sa.st_ike_spis,
+-				&ike->sa.st_ike_spis)) {
+-			/* Our IKE SA with oustanding IKE AUTH request
+-			 * has SPI higher, delete this IKE SA, keep
+-			 * the simultaneous_ike.
+-			 */
+-			ldbg(ike->sa.logger, "preferring the outstanding "PRI_SO" over the current "PRI_SO,
+-			     pri_so(simultaneous_ike->sa.st_serialno),
+-			     pri_so(ike->sa.st_serialno));
+-			record_v2N_response(ike->sa.logger, ike, md, v2N_AUTHENTICATION_FAILED,
+-					    empty_shunk, ENCRYPTED_PAYLOAD);
+-			return STF_FATAL;
+-		} else {
+-			/* IKE SA for the current IKE AUTH request has
+-			 * SPI higher, continue with IKE AUTH reply
+-			 * and drop the other one.
+-			 */
+-			ldbg(ike->sa.logger, "preferring the current "PRI_SO" over the outstanding "PRI_SO"",
+-			     pri_so(ike->sa.st_serialno),
+-			     pri_so(simultaneous_ike->sa.st_serialno));
+-			terminate_ike_family(&simultaneous_ike, REASON_SUPERSEDED_BY_NEW_SA, HERE);
+-		}
++	struct ike_sa *ike_to_reject = check_simultaneous_ike_auth(c, ike, md);
++	if (ike_to_reject == ike) {
++		/* Reject current IKE_AUTH request */
++		record_v2N_response(ike->sa.logger, ike, md, v2N_AUTHENTICATION_FAILED, empty_shunk, ENCRYPTED_PAYLOAD);
++		return STF_FATAL;
++	} else if (ike_to_reject != NULL) {
++		/* Terminate the other IKE SA, continue with current */
++		terminate_ike_family(&ike_to_reject, REASON_SUPERSEDED_BY_NEW_SA, HERE);
+ 	}
+ 
+ 	bool found_ppk = false;
+-- 
+2.52.0
+
+
+From c956e30d304ac460559116dbf53487ebd2696f8a Mon Sep 17 00:00:00 2001
+From: Ondrej Moris <omoris@redhat.com>
+Date: Sun, 25 Jan 2026 19:46:45 +0100
+Subject: [PATCH 5/7] ikev2: extend check for simultaneous IKE_AUTH
+
+On initiator, if simultaneous IKE receives IKE_AUTH response
+shortly before the current IKE_AUTH request is received,
+then this simultaneous IKE gets established and hence it
+incorrectly missed by the current check. This commit extends
+the check for simultaneous IKE to capture such cases and if
+there is such simultaneous IKE it will be keps and the current
+one will be dropped.
+
+Signed-off-by: Ondrej Moris <omoris@redhat.com>
+---
+ programs/pluto/ikev2_auth.c | 21 ++++++++++++++++++++-
+ 1 file changed, 20 insertions(+), 1 deletion(-)
+
+diff --git a/programs/pluto/ikev2_auth.c b/programs/pluto/ikev2_auth.c
+index 3c61e45cdd..10d583b4c1 100644
+--- a/programs/pluto/ikev2_auth.c
++++ b/programs/pluto/ikev2_auth.c
+@@ -1054,6 +1054,7 @@ lset_t proposed_v2AUTH(struct ike_sa *ike,
+  *	- same connection
+  *	- initiating IKE
+  *	- non-established with IKE_AUTH request waiting for reply
++ *	- established within 1 second of processing this IKE_AUTH request
+  *
+  * Returns:
+  *  - ike: reject current IKE_AUTH request
+@@ -1108,6 +1109,17 @@ struct ike_sa *check_simultaneous_ike_auth(const struct connection *c,
+ 				break;
+ 			}
+ 		}
++
++		/* Was candidate established within the last second of the current IKE_AUTH request arrival? */
++		if (candidate->sa.st_state->kind == STATE_V2_ESTABLISHED_IKE_SA) {
++			deltatime_t age = monotime_diff(mononow(), candidate->sa.st_v2_msgid_windows.initiator.last_recv);
++			if (deltatime_cmp(age, <, one_second)) {
++				llog(RC_LOG, ike->sa.logger, "IKE SA "PRI_SO" recently established",
++						pri_so(candidate->sa.st_serialno));
++				simultaneous_ike = candidate;
++				break;
++			}
++		}
+ 	}
+ 
+ 	/* No simultaneous IKE found */
+@@ -1117,8 +1129,15 @@ struct ike_sa *check_simultaneous_ike_auth(const struct connection *c,
+ 
+ 	/* Simultaneous IKE found, we need to decide if we keep that one or current IKE.
+ 	 *
+-	 * We keep one with higher SPI.
++	 * If simultaneous IKE is already established, we keep it. Otherwise we keep one
++	 * with higher SPI.
+ 	 */
++	if (simultaneous_ike->sa.st_state->kind == STATE_V2_ESTABLISHED_IKE_SA) {
++		llog(RC_LOG, ike->sa.logger, "rejecting IKE_AUTH request; IKE SA "PRI_SO" already established",
++				pri_so(simultaneous_ike->sa.st_serialno));
++		return (struct ike_sa *) ike;
++	}
++
+ 	if (ike_spis_gt(&simultaneous_ike->sa.st_ike_spis, &ike->sa.st_ike_spis)) {
+ 		ldbg(ike->sa.logger, "preferring the simultaneous IKE SA "PRI_SO" over the current IKE SA "PRI_SO,
+ 				pri_so(simultaneous_ike->sa.st_serialno), pri_so(ike->sa.st_serialno));
+-- 
+2.52.0
+
+
+From 182a09854935d505aa8cb5cfd7843bd133508452 Mon Sep 17 00:00:00 2001
+From: Ondrej Moris <omoris@redhat.com>
+Date: Tue, 24 Feb 2026 12:59:29 +0100
+Subject: [PATCH 6/7] ikev2: use nonces to tie-break simultaneous IKE
+
+Previously, SPI was used to tie-break simultaneous IKE_AUTH
+request. Using nonces follows RFC 7296 better.
+
+Signed-off-by: Ondrej Moris <omoris@redhat.com>
+---
+ include/ike_spi.h           |  1 -
+ programs/pluto/ike_spi.c    | 11 -----------
+ programs/pluto/ikev2_auth.c |  4 ++--
+ 3 files changed, 2 insertions(+), 14 deletions(-)
+
+diff --git a/include/ike_spi.h b/include/ike_spi.h
+index 376c120c0e..0c05542bae 100644
+--- a/include/ike_spi.h
++++ b/include/ike_spi.h
+@@ -39,7 +39,6 @@ typedef struct {
+ } ike_spis_t;
+ 
+ bool ike_spis_eq(const ike_spis_t *lhs, const ike_spis_t *rhs);
+-bool ike_spis_gt(const ike_spis_t *lhs, const ike_spis_t *rhs);
+ 
+ /*
+  * Need to handle two cases:
+diff --git a/programs/pluto/ike_spi.c b/programs/pluto/ike_spi.c
+index d7bb73a6e8..312c835bed 100644
+--- a/programs/pluto/ike_spi.c
++++ b/programs/pluto/ike_spi.c
+@@ -42,17 +42,6 @@ bool ike_spis_eq(const ike_spis_t *lhs, const ike_spis_t *rhs)
+ 		ike_spi_eq(&lhs->responder, &rhs->responder));
+ }
+ 
+-bool ike_spis_gt(const ike_spis_t *lhs, const ike_spis_t *rhs)
+-{
+-	int d = memcmp(lhs->initiator.bytes, rhs->initiator.bytes,
+-			    sizeof(lhs->initiator.bytes));
+-	if (d == 0) {
+-		d = memcmp(lhs->responder.bytes, rhs->responder.bytes,
+-			   sizeof(lhs->responder.bytes));
+-	}
+-	return d > 0;
+-}
+-
+ static struct {
+ 	uint8_t bytes[SHA2_256_DIGEST_SIZE];
+ } ike_spi_secret;
+diff --git a/programs/pluto/ikev2_auth.c b/programs/pluto/ikev2_auth.c
+index 10d583b4c1..7785860995 100644
+--- a/programs/pluto/ikev2_auth.c
++++ b/programs/pluto/ikev2_auth.c
+@@ -1130,7 +1130,7 @@ struct ike_sa *check_simultaneous_ike_auth(const struct connection *c,
+ 	/* Simultaneous IKE found, we need to decide if we keep that one or current IKE.
+ 	 *
+ 	 * If simultaneous IKE is already established, we keep it. Otherwise we keep one
+-	 * with higher SPI.
++	 * with higher nonce.
+ 	 */
+ 	if (simultaneous_ike->sa.st_state->kind == STATE_V2_ESTABLISHED_IKE_SA) {
+ 		llog(RC_LOG, ike->sa.logger, "rejecting IKE_AUTH request; IKE SA "PRI_SO" already established",
+@@ -1138,7 +1138,7 @@ struct ike_sa *check_simultaneous_ike_auth(const struct connection *c,
+ 		return (struct ike_sa *) ike;
+ 	}
+ 
+-	if (ike_spis_gt(&simultaneous_ike->sa.st_ike_spis, &ike->sa.st_ike_spis)) {
++	if (hunk_cmp(simultaneous_ike->sa.st_ni, ike->sa.st_ni) > 0) {
+ 		ldbg(ike->sa.logger, "preferring the simultaneous IKE SA "PRI_SO" over the current IKE SA "PRI_SO,
+ 				pri_so(simultaneous_ike->sa.st_serialno), pri_so(ike->sa.st_serialno));
+ 		return (struct ike_sa *) ike;
+-- 
+2.52.0
+
+
+From be59b08e8f88937ae513c65902ce1af97f7a1eb3 Mon Sep 17 00:00:00 2001
+From: Ondrej Moris <omoris@redhat.com>
+Date: Tue, 24 Feb 2026 14:54:35 +0100
+Subject: [PATCH 7/7] impair: add impair option for setting nonces
+
+New impair options 'impair_initiator_nonce' and 'impair_responder_nonce'
+allow setting all 32 bytes of nonce to specified value, e.g. to set high
+nonce value one can use 'impair ike_initiator_nonce:0xff'. This might be
+useful for testing.
+
+Signed-off-by: Ondrej Moris <omoris@redhat.com>
+---
+ include/impair.h          |  2 ++
+ lib/libswan/impair.c      |  2 ++
+ programs/pluto/crypt_ke.c | 14 ++++++++++++++
+ 3 files changed, 18 insertions(+)
+
+diff --git a/include/impair.h b/include/impair.h
+index d3b2b68b3d..e6897e18d6 100644
+--- a/include/impair.h
++++ b/include/impair.h
+@@ -111,6 +111,8 @@ struct impair {
+ 
+ 	struct impair_unsigned ike_initiator_spi;
+ 	struct impair_unsigned ike_responder_spi;
++	struct impair_unsigned ike_initiator_nonce;
++	struct impair_unsigned ike_responder_nonce;
+ 
+ 	bool bust_mi2;
+ 	bool bust_mr2;
+diff --git a/lib/libswan/impair.c b/lib/libswan/impair.c
+index 9e7cd829de..ba28d6420b 100644
+--- a/lib/libswan/impair.c
++++ b/lib/libswan/impair.c
+@@ -210,6 +210,8 @@ struct impairment impairments[] = {
+ 
+ 	U(ike_initiator_spi, "corrupt the IKE initiator SPI setting it to the <unsigned> value"),
+ 	U(ike_responder_spi, "corrupt the IKE responder SPI setting it to the <unsigned> value"),
++	U(ike_initiator_nonce, "corrupt the IKE initiator nonce setting it to the <unsigned>"),
++	U(ike_responder_nonce, "corrupt the IKE responder nonce setting it to the <unsigned>"),
+ 
+ 	B(ikev1_del_with_notify, "causes pluto to send IKE Delete with additional bogus Notify payload"),
+ 
+diff --git a/programs/pluto/crypt_ke.c b/programs/pluto/crypt_ke.c
+index 1d7dfd5ad5..8535a350fc 100644
+--- a/programs/pluto/crypt_ke.c
++++ b/programs/pluto/crypt_ke.c
+@@ -52,12 +52,14 @@
+ #include "ike_alg.h"
+ #include "crypt_dh.h"
+ #include "crypt_ke.h"
++#include "impair.h"
+ 
+ struct task {
+ 	const struct dh_desc *dh;
+ 	chunk_t nonce;
+ 	struct dh_local_secret *local_secret;
+ 	ke_and_nonce_cb *cb;
++	enum sa_role role;
+ };
+ 
+ static void compute_ke_and_nonce(struct logger *logger,
+@@ -72,6 +74,17 @@ static void compute_ke_and_nonce(struct logger *logger,
+ 		}
+ 	}
+ 	task->nonce = alloc_rnd_chunk(DEFAULT_NONCE_SIZE, "nonce");
++
++	if (impair.ike_initiator_nonce.enabled && task->role == SA_INITIATOR) {
++		uint8_t pattern = (uint8_t)impair.ike_initiator_nonce.value;
++		memset(task->nonce.ptr, pattern, task->nonce.len);
++		llog(RC_LOG, logger, "IMPAIR: forcing IKE initiator nonce to all 0x%02x bytes", pattern);
++	} else if (impair.ike_responder_nonce.enabled && task->role == SA_RESPONDER) {
++		uint8_t pattern = (uint8_t)impair.ike_responder_nonce.value;
++		memset(task->nonce.ptr, pattern, task->nonce.len);
++		llog(RC_LOG, logger, "IMPAIR: forcing IKE responder nonce to all 0x%02x bytes", pattern);
++	}
++
+ 	if (LDBGP(DBG_CRYPT, logger)) {
+ 		LDBG_log_hunk(logger, "generated nonce:", task->nonce);
+ 	}
+@@ -112,6 +125,7 @@ void submit_ke_and_nonce(struct state *callback_sa,
+ 	struct task *task = alloc_thing(struct task, "dh");
+ 	task->dh = dh;
+ 	task->cb = cb;
++	task->role = task_sa->st_sa_role;
+ 	submit_task(/*callback*/callback_sa, /*task*/task_sa, md, detach_whack,
+ 		    task, &ke_and_nonce_handler, where);
+ }
+-- 
+2.52.0
+

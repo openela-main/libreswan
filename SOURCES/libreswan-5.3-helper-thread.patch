@@ -1,0 +1,97 @@
+From eb31dda36d082e33749bc294d56ec493a094336d Mon Sep 17 00:00:00 2001
+From: Andrew Cagney <cagney@gnu.org>
+Date: Sun, 16 Nov 2025 10:33:53 -0500
+Subject: [PATCH] helpers: work around NSS by joining helper threads
+
+Much of the analysis and testing by Ondrej Moris
+
+NSS attaches stuff to the threads onexit queue that must
+be run before the main thread exits (if it doesn't things
+explode during shutdown).
+
+See: Race condition in helper_thread_stopped_callback() #2461
+See: PR_Cleanup() doesn't wait for pthread_create() threads
+https://bugzilla.mozilla.org/show_bug.cgi?id=1992272
+---
+ programs/pluto/server_pool.c | 42 +++++++++++++++++++++++++++++++-----
+ 1 file changed, 37 insertions(+), 5 deletions(-)
+
+diff --git a/programs/pluto/server_pool.c b/programs/pluto/server_pool.c
+index 056a007301..5c7dc5e18d 100644
+--- a/programs/pluto/server_pool.c
++++ b/programs/pluto/server_pool.c
+@@ -275,6 +275,22 @@ static void *helper_thread(void *arg)
+ 	dbg("helper %u: telling main thread that it is exiting", w->helper_id);
+ 	schedule_callback("helper stopped", deltatime(0), SOS_NOBODY,
+ 			  helper_thread_stopped_callback, NULL);
++	/*
++	 * Danger.  This isn't the end.
++	 *
++	 * NSS still has stuff in thread-exit handlers to execute and
++	 * there's no clean way of forcing its execution (and if it
++	 * isn't allowed to run NSS crashes!).  Hence, the main thread
++	 * will need to wait for this thread to exit.
++	 *
++	 * But wait, there's more.  The main thread also needs to keep
++	 * the event loop running while these threads are exiting so
++	 * ptread_join() needs to be called with care.
++	 *
++	 * See: Race condition in helper_thread_stopped_callback() #2461
++	 * See: PR_Cleanup() doesn't wait for pthread_create() threads
++	 * https://bugzilla.mozilla.org/show_bug.cgi?id=1992272
++	 */
+ 	return NULL;
+ }
+ 
+@@ -589,10 +605,6 @@ void start_server_helpers(uintmax_t nhelpers, struct logger *logger)
+ 
+ /*
+  * Repeatedly nudge the helper threads until they all exit.
+- *
+- * Note that pthread_join() doesn't work here: an any-thread join may
+- * end up joining an unrelated thread (for instance the CRL helper);
+- * and a specific thread join may block waiting for the wrong thread.
+  */
+ 
+ static void (*server_helpers_stopped_callback)(void);
+@@ -605,6 +617,17 @@ static void helper_thread_stopped_callback(const char *story UNUSED,
+ 	dbg("one helper thread exited, %u remaining",
+ 	    helper_threads_started-helper_threads_stopped);
+ 
++	/*
++	 * Danger:
++	 *
++	 * Delay joining W.pid until all helper threads have exited.
++	 * This way the event-loop is kept running.
++	 *
++	 * Even though W is on the exit path it still needs to execute
++	 * NSS's thread exit code - who knows what that is doing and
++	 * how long it will take -
++	 */
++
+ 	/* wait for more? */
+ 	if (helper_threads_started > helper_threads_stopped) {
+ 		/* poke threads waiting for work */
+@@ -612,9 +635,18 @@ static void helper_thread_stopped_callback(const char *story UNUSED,
+ 		return;
+ 	}
+ 
+-	/* all done; cleanup */
++	 /*
++	  * All done; cleanup
++	  *
++	  * All helper threads are on the exit war-path so, hopefully,
++	  * this join will not block (but no telling what NSS did).
++	  */
+ 	for (unsigned h = 0; h < helper_threads_started; h++) {
+ 		struct helper_thread *w = &helper_threads[h];
++		int e = pthread_join(w->pid, NULL);
++		if (e != 0) {
++			llog_errno(RC_LOG, w->logger, e, "WARNING: pthread_join() failed, ");
++		}
+ 		free_logger(&w->logger, HERE);
+ 	}
+ 
+-- 
+2.52.0
+
