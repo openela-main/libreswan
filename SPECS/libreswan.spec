@@ -37,7 +37,7 @@ Name: libreswan
 Summary: IPsec implementation with IKEv1 and IKEv2 keying protocols
 # version is generated in the release script
 Version: 4.12
-Release: %{?prever:0.}2%{?prever:.%{prever}}%{?dist}.4
+Release: %{?prever:0.}2%{?prever:.%{prever}}%{?dist}.6
 License: GPLv2
 Url: https://libreswan.org/
 
@@ -55,6 +55,10 @@ Patch6: libreswan-4.3-1934186-config.patch
 Patch7: libreswan-4.9-2176248-authby-rsasig.patch
 Patch8: libreswan-4.12-ikev2-auth-delete-state.patch
 Patch9: libreswan-4.12-ikev1-compute-keymat-default.patch
+Patch10: libreswan-4.12-CVE-2026-12413.patch
+Patch11: libreswan-4.12-CVE-2026-50721.patch
+Patch12: libreswan-4.12-CVE-2026-50722.patch
+Patch13: libreswan-4.12-CVE-2026-14957.patch
 
 BuildRequires: audit-libs-devel
 BuildRequires: bison
@@ -116,6 +120,10 @@ Libreswan is based on Openswan-2.6.38 which in turn is based on FreeS/WAN-2.04
 %patch7 -p1
 %patch8 -p1
 %patch9 -p1
+%patch10 -p1
+%patch11 -p1
+%patch12 -p1
+%patch13 -p1
 
 # linking to freebl is not needed
 sed -i "s/-lfreebl //" mk/config.mk
@@ -219,6 +227,12 @@ certutil -N -d sql:$tmpdir --empty-password
 %attr(0644,root,root) %doc %{_mandir}/*/*
 
 %changelog
+* Thu Jul 23 2026 Daiki Ueno  <dueno@redhat.com> - 4.12-2.6
+- Backport fix for CVE-2026-14957 (RHEL-212498)
+
+* Thu Jul 09 2026 Daiki Ueno  <dueno@redhat.com> - 4.12-2.5
+- Backport fixes for CVE-2026-12413, CVE-2026-50721 and CVE-2026-50722 (RHEL-190146, RHEL-190140, RHEL-190132)
+
 * Thu Jun  6 2024 Daiki Ueno <dueno@redhat.com> - 4.12-2.4
 - Fix CVE-2024-3652 (RHEL-32482)
 
