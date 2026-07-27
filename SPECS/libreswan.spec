@@ -31,7 +31,7 @@ Name: libreswan
 Summary: Internet Key Exchange (IKEv1 and IKEv2) implementation for IPsec
 # version is generated in the release script
 Version: 4.15
-Release: %{?prever:0.}8%{?prever:.%{prever}}%{?dist}
+Release: %{?prever:0.}10%{?prever:.%{prever}}%{?dist}
 License: GPLv2
 Url: https://libreswan.org/
 Source0: https://download.libreswan.org/%{?prever:development/}%{name}-%{version}%{?prever}.tar.gz
@@ -45,6 +45,10 @@ Patch: libreswan-4.15-ondemand-tcp.patch
 Patch: libreswan-4.15-netlink-extack.patch
 Patch: libreswan-4.15-create-child-sa-race-condition.patch
 Patch: libreswan-4.15-rereadsecrets.patch
+Patch: libreswan-4.15-CVE-2026-12413.patch
+Patch: libreswan-4.15-CVE-2026-50721.patch
+Patch: libreswan-4.15-CVE-2026-50722.patch
+Patch: libreswan-4.15-CVE-2026-14957.patch
 
 BuildRequires: audit-libs-devel
 BuildRequires: bison
@@ -200,6 +204,12 @@ certutil -N -d sql:$tmpdir --empty-password
 %doc %{_mandir}/*/*
 
 %changelog
+* Thu Jul 23 2026 Daiki Ueno  <dueno@redhat.com> - 4.15-10
+- Backport fix for CVE-2026-14957 (RHEL-212107)
+
+* Thu Jul 02 2026 Daiki Ueno  <dueno@redhat.com> - 4.15-9
+- Backport fixes for CVE-2026-12413, CVE-2026-50721 and CVE-2026-50722 (RHEL-190120, RHEL-190125, RHEL-190155)
+
 * Tue Jan 14 2025 Daiki Ueno <dueno@redhat.com> - 4.15-8
 - showhostkey: fix regression after RHEL-68047 (RHEL-70842)
 
