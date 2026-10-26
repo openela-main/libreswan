@@ -31,7 +31,7 @@ Name: libreswan
 Summary: Internet Key Exchange (IKEv1 and IKEv2) implementation for IPsec
 # version is generated in the release script
 Version: 4.15
-Release: %{?prever:0.}10%{?prever:.%{prever}}%{?dist}
+Release: %{?prever:0.}11%{?prever:.%{prever}}%{?dist}
 License: GPLv2
 Url: https://libreswan.org/
 Source0: https://download.libreswan.org/%{?prever:development/}%{name}-%{version}%{?prever}.tar.gz
@@ -49,6 +49,9 @@ Patch: libreswan-4.15-CVE-2026-12413.patch
 Patch: libreswan-4.15-CVE-2026-50721.patch
 Patch: libreswan-4.15-CVE-2026-50722.patch
 Patch: libreswan-4.15-CVE-2026-14957.patch
+Patch: libreswan-4.15-CVE-2026-94453.patch
+Patch: libreswan-4.15-CVE-2026-77206.patch
+Patch: libreswan-4.15-CVE-2026-77207.patch
 
 BuildRequires: audit-libs-devel
 BuildRequires: bison
@@ -204,6 +207,9 @@ certutil -N -d sql:$tmpdir --empty-password
 %doc %{_mandir}/*/*
 
 %changelog
+* Mon Oct 19 2026 Daiki Ueno  <dueno@redhat.com> - 4.15-11
+- Backport fixes for CVE-2026-94453, CVE-2026-77206, and CVE-2026-77207 (RHEL-281889, RHEL-281998, RHEL-281985)
+
 * Thu Jul 23 2026 Daiki Ueno  <dueno@redhat.com> - 4.15-10
 - Backport fix for CVE-2026-14957 (RHEL-212107)
 
