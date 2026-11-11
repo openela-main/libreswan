@@ -208,7 +208,7 @@ certutil -N -d sql:$tmpdir --empty-password
 
 %changelog
 * Mon Oct 19 2026 Daiki Ueno  <dueno@redhat.com> - 4.15-11
-- Backport fixes for CVE-2026-94453, CVE-2026-77206, and CVE-2026-77207 (RHEL-281889, RHEL-281998, RHEL-281985)
+- Backport fixes for CVE-2026-94453, CVE-2026-77206, and CVE-2026-77207 (RHEL-281884, RHEL-282001, RHEL-281986)
 
 * Thu Jul 23 2026 Daiki Ueno  <dueno@redhat.com> - 4.15-10
 - Backport fix for CVE-2026-14957 (RHEL-212107)
